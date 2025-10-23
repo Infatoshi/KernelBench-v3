@@ -1,0 +1,19 @@
+**__pycache__/
+scratch/
+**/scratch/
+*.egg-info/
+**build/
+**dist/
+# **results/
+results/*
+runs/*
+outputs/*
+visualizations/*
+cache/*
+!results/timing/
+.env
+venv
+.venv
+.DS_Store
+.cursor
+test_build/
