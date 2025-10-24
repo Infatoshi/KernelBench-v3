@@ -1094,6 +1094,140 @@ Rename the TritonBench golden result for `solve_and_add_scaled_vector` to avoid 
 ## validate
 - No runtime validation required; this is a rename plus constructor literal fix.
 
+# 2025-10-24 README benchmark overview graphic
+
+## why
+Surface the latest raw CUDA and Triton compile/correctness results directly in the README so visitors immediately see real benchmark outcomes.
+
+## patch
+```diff
+--- a/README.md
++++ b/README.md
+@@
+-# KernelBench-v3
+-
+-Unified benchmark for evaluating LLM-generated GPU kernels (CUDA & Triton) in both raw and agentic workflows.
++# KernelBench-v3
++
++![Raw and Triton compilation/correctness hit rates for recent runs](docs/media/model_outcomes.svg)
++
++Unified benchmark for evaluating LLM-generated GPU kernels (CUDA & Triton) in both raw and agentic workflows.
+```
+
+```diff
+--- /dev/null
++++ b/docs/media/model_outcomes.svg
+@@
++<svg xmlns='http://www.w3.org/2000/svg' width='940' height='728' viewBox='0 0 940 728'>
++<style> text { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-size: 16px; } .header { font-weight: 600; } .model { font-weight: 500; } </style>
++<rect x='0' y='0' width='940' height='48' fill='#0B1F33' rx='8' ry='8' />
++<text x='260.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Model</text>
++<text x='590.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Compiled</text>
++<text x='730.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Numerically Correct</text>
++<text x='870.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Fast@1%</text>
++<rect x='0' y='48' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='48' x2='940' y2='48' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='74.0' fill='#213547' class='model'>Raw CUDA · Gemini 2.5 Pro</text>
++<text x='590.0' y='74.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='730.0' y='74.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='870.0' y='74.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='88' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='88' x2='940' y2='88' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='114.0' fill='#213547' class='model'>Raw CUDA · Gemini 2.5 Flash</text>
++<text x='590.0' y='114.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='730.0' y='114.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='870.0' y='114.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='128' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='128' x2='940' y2='128' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='154.0' fill='#213547' class='model'>Raw CUDA · Anthropic Claude Sonnet 4.5</text>
++<text x='590.0' y='154.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='730.0' y='154.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='870.0' y='154.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='168' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='168' x2='940' y2='168' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='194.0' fill='#213547' class='model'>Raw CUDA · Anthropic Claude Haiku 4.5</text>
++<text x='590.0' y='194.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='730.0' y='194.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='870.0' y='194.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='208' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='208' x2='940' y2='208' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='234.0' fill='#213547' class='model'>Raw CUDA · OpenAI GPT-5</text>
++<text x='590.0' y='234.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='234.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='234.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='248' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='248' x2='940' y2='248' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='274.0' fill='#213547' class='model'>Raw CUDA · OpenAI GPT-5 Nano</text>
++<text x='590.0' y='274.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='274.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='274.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='288' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='288' x2='940' y2='288' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='314.0' fill='#213547' class='model'>Raw CUDA · OpenAI GPT-5 Mini</text>
++<text x='590.0' y='314.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='314.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='314.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='328' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='328' x2='940' y2='328' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='354.0' fill='#213547' class='model'>Raw CUDA · OpenRouter Z-AI GLM-4.6</text>
++<text x='590.0' y='354.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='354.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='354.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='368' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='368' x2='940' y2='368' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='394.0' fill='#213547' class='model'>Raw Triton · Gemini 2.5 Pro</text>
++<text x='590.0' y='394.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='730.0' y='394.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='394.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='408' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='408' x2='940' y2='408' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='434.0' fill='#213547' class='model'>Raw Triton · Gemini 2.5 Flash</text>
++<text x='590.0' y='434.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='730.0' y='434.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='434.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='448' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='448' x2='940' y2='448' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='474.0' fill='#213547' class='model'>Raw Triton · Anthropic Claude Sonnet 4.5</text>
++<text x='590.0' y='474.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='474.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='474.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='488' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='488' x2='940' y2='488' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='514.0' fill='#213547' class='model'>Raw Triton · Anthropic Claude Haiku 4.5</text>
++<text x='590.0' y='514.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='514.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='514.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='528' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='528' x2='940' y2='528' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='554.0' fill='#213547' class='model'>Raw Triton · OpenAI GPT-5</text>
++<text x='590.0' y='554.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='554.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='554.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='568' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='568' x2='940' y2='568' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='594.0' fill='#213547' class='model'>Raw Triton · OpenAI GPT-5 Nano</text>
++<text x='590.0' y='594.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='594.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='594.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='608' width='940' height='40' fill='#F4F7FB'/>
++<line x1='0' y1='608' x2='940' y2='608' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='634.0' fill='#213547' class='model'>Raw Triton · OpenAI GPT-5 Mini</text>
++<text x='590.0' y='634.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='730.0' y='634.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='634.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<rect x='0' y='648' width='940' height='40' fill='#FFFFFF'/>
++<line x1='0' y1='648' x2='940' y2='648' stroke='#D0D7E3' stroke-width='1'/>
++<text x='16' y='674.0' fill='#213547' class='model'>Raw Triton · OpenRouter Z-AI GLM-4.6</text>
++<text x='590.0' y='674.0' fill='#2E7D32' text-anchor='middle'>100%</text>
++<text x='730.0' y='674.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<text x='870.0' y='674.0' fill='#B71C1C' text-anchor='middle'>0%</text>
++<line x1='0' y1='688' x2='940' y2='688' stroke='#D0D7E3' stroke-width='1'/>
++</svg>
+```
+
+## validate
+- Visual check: open `docs/media/model_outcomes.svg` in a browser and confirm the table renders as expected.
+
 # 2025-10-23 Expand All-Providers Config with XAI
 
 ## rationale

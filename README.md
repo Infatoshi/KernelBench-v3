@@ -1,5 +1,7 @@
 # KernelBench-v3
 
+![Raw and Triton compilation/correctness hit rates for recent runs](docs/media/model_outcomes.svg)
+
 Unified benchmark for evaluating LLM-generated GPU kernels (CUDA & Triton) in both raw and agentic workflows.
 
 ---
