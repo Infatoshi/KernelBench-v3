@@ -1,7 +1,5 @@
-from tqdm import tqdm
 import os
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from agentic.agents.reflexion_oneshot import Reflexion_Oneshot
 from memories.Memory import MemoryClassMeta
 from prompts import prompt_for_generation, prompt_for_reflection
@@ -13,8 +11,13 @@ try:
 except ImportError:  # pragma: no cover
     from utils.utils import clear_code, extract_function_signatures, clear_json
     from dataloaders.ProblemState import ProblemState
-from loguru import logger
-from tenacity import RetryError
+
+
+def _dump_json(data):
+    try:
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    except TypeError:
+        return str(data)
 
 
 class OptimAgent(Reflexion_Oneshot):
@@ -134,32 +137,23 @@ class OptimAgent(Reflexion_Oneshot):
         """
         assert ancestor_num >= 0, f"expect ancestor_num to be larger than 0, but got {ancestor_num}"
         data_len = datalen if datalen else len(self.dataset)
+        # force sequential execution so logs are easier to follow
+        multi_thread = False
         for iter in range(start_iter, start_iter + iteration_num):
-            logger.info(f"\n=== Iteration {iter} ===")
+            print(f"\n=== Iteration {iter} ===")
             if output_path is not None:
                 root, extension = os.path.splitext(output_path)
                 iter_path = f"{root}_{iter}{extension}"
                 mem_output_path = f"{root}_mem_{iter}.json"
 
-            if multi_thread:
-                thread_num = 3
-            
             # generate solution
-            logger.info(f"\ngenerate solution")
-            with tqdm(total=data_len) as pbar:
-                if multi_thread:
-                    
-                    with ThreadPoolExecutor(max_workers=thread_num) as executor:
-                        futures = {executor.submit(self.generate_solution, mem, temperature): mem for mem in self.memories[start_idx:(start_idx + data_len)]}
-                        for future in as_completed(futures):
-                            pbar.update(1)
-                else:
-                    for mem in self.memories[start_idx:(start_idx + data_len)]:
-                        self.generate_solution(mem, temperature=temperature)
-                        pbar.update(1)
-            
+            print("generate solution")
+            for idx, mem in enumerate(self.memories[start_idx:(start_idx + data_len)], start=1):
+                print(f"  [solution {idx}/{data_len}] {mem.ps.filename}")
+                self.generate_solution(mem, temperature=temperature)
+
             # run scripts
-            logger.info(f"\nrun scripts on gpu")
+            print("run scripts on gpu")
             if output_path is None or (hasattr(self.dataset, 'rocm_tests') and self.dataset.rocm_tests):
                 tmp_dir = "tmp"
                 exe_dir = "pass_exe"
@@ -172,7 +166,8 @@ class OptimAgent(Reflexion_Oneshot):
                 perf_result_dir = f"{root}_perf_results"
                 perf_log_dir = f"{root}_perf_logs"
             
-            for mem in tqdm(self.memories[start_idx:(start_idx + data_len)]):
+            for idx, mem in enumerate(self.memories[start_idx:(start_idx + data_len)], start=1):
+                print(f"  [execute {idx}/{data_len}] {mem.ps.filename}")
                 try:
                     pass_call, pass_exe, call_stdout, call_stderr, exe_stdout, exe_stderr = self.dataset.test_opt_correctness(mem.raw_code[0], mem.ps.filename, tmp_dir, exe_dir=exe_dir)
                 except Exception as e:
@@ -197,14 +192,14 @@ class OptimAgent(Reflexion_Oneshot):
                     mem.exe_candidate = mem.raw_code[0]
             
             
-            # logger.info(f"Exec passed files: {os.listdir(exe_dir)}")
-            if not os.listdir(exe_dir):
+            # print(f"Exec passed files: {os.listdir(exe_dir)}")
+            if not os.path.isdir(exe_dir) or not os.listdir(exe_dir):
                 pass
                 # logger.warning(f"No scripts passed correctness checks in iteration {iter}. Skipping performance evaluation.")
             else:
                 # run performance evaluation
                 # This block now only runs if there are files to evaluate.
-                # logger.info("\nrun performance evaluation")
+                # print("run performance evaluation")
                 perf_results_dict = {}
 
                 if hasattr(self.dataset, 'rocm_tests') and self.dataset.rocm_tests:
@@ -230,11 +225,12 @@ class OptimAgent(Reflexion_Oneshot):
                     # The logic below will handle reading from files.
 
                 # get ms and efficiency
-                # logger.info("\nparsing performance results")
-                for mem in tqdm(self.memories[start_idx:(start_idx + data_len)],desc="Performance Evaluation"):
+                # print("parsing performance results")
+                for idx, mem in enumerate(self.memories[start_idx:(start_idx + data_len)], start=1):
+                    print(f"  [performance {idx}/{data_len}] {mem.ps.filename}")
                     if not mem.pass_exe: # Only check performance if correctness passed
                         continue
-                    
+
                     ms = None
                     efficiency = None
 
@@ -279,22 +275,15 @@ class OptimAgent(Reflexion_Oneshot):
                             mem.efficiency = efficiency
                             mem.raw_code.extend([ms, efficiency])
                         except Exception as e:
-                            logger.error(f"TritonBench performance calculation failed for {mem.ps.filename}: {e}")
+                            print(f"TritonBench performance calculation failed for {mem.ps.filename}: {e}")
                             mem.pass_perf = False
                             continue
 
             # generate reflections
-            logger.info(f"\ngenerate reflections")
-            with tqdm(total=data_len) as pbar:
-                if multi_thread:
-                    with ThreadPoolExecutor(max_workers=thread_num) as executor:
-                        futures = {executor.submit(self.generate_reflexion, mem, temperature): mem for mem in self.memories[start_idx:(start_idx + data_len)]}
-                        for future in as_completed(futures):
-                            pbar.update(1)
-                else:
-                    for mem in self.memories[start_idx:(start_idx + data_len)]:
-                        self.generate_reflexion(mem, temperature=temperature)
-                        pbar.update(1)
+            print("generate reflections")
+            for idx, mem in enumerate(self.memories[start_idx:(start_idx + data_len)], start=1):
+                print(f"  [reflection {idx}/{data_len}] {mem.ps.filename}")
+                self.generate_reflexion(mem, temperature=temperature)
 
             # update perf_candidates
             for mem in self.memories[start_idx:(start_idx + data_len)]:
@@ -304,7 +293,7 @@ class OptimAgent(Reflexion_Oneshot):
                 if len(mem.perf_candidates) < ancestor_num:
                     mem.raw_code.append(mem.reflection)
                     if len(mem.raw_code) < 4:
-                        logger.info(f"no latency and efficiency info in the raw code for {mem.ps.filename}")
+                        print(f"no latency and efficiency info in the raw code for {mem.ps.filename}")
                         mem.pass_perf = False
                         continue
                     mem.perf_candidates.append(tuple(mem.raw_code))
@@ -391,12 +380,29 @@ class OptimAgent(Reflexion_Oneshot):
             {"role": "user", "content": text},
         ]
 
+        printed_response = False
         try:
+            request_payload = {
+                "stage": "generate_solution",
+                "file": mem.ps.filename,
+                "model": getattr(self.model, "model_id", type(self.model).__name__),
+                "messages": msg,
+                "kwargs": {"temperature": temperature, "max_tokens": 15000},
+            }
+            print("\n=== AGENTIC LLM REQUEST ===")
+            print(_dump_json(request_payload))
             response = self.model.generate(msg, temperature=temperature, max_tokens=15000)
-        except:
-            logger.info(f"failed to call LLM for {mem.ps.filename}")
+            print("=== AGENTIC LLM RESPONSE ===")
+            print(response if isinstance(response, str) else _dump_json(response))
+            printed_response = True
+        except Exception as err:
+            print(f"failed to call LLM for {mem.ps.filename}: {err}")
             response = {"code": ""}
-            
+
+        if not printed_response:
+            print("=== AGENTIC LLM RESPONSE ===")
+            print(response if isinstance(response, str) else _dump_json(response))
+
         try:
             mem.raw_code = [clear_code(clear_json(response)["code"])]
         except:
@@ -458,5 +464,20 @@ class OptimAgent(Reflexion_Oneshot):
                 "content": reflect_txt
             }
         ]
-        mem.reflection = self.model.generate(reflect_msg, temperature=temperature)
-
+        request_payload = {
+            "stage": "generate_reflection",
+            "file": mem.ps.filename,
+            "model": getattr(self.model, "model_id", type(self.model).__name__),
+            "messages": reflect_msg,
+            "kwargs": {"temperature": temperature},
+        }
+        print("\n=== AGENTIC LLM REQUEST ===")
+        print(_dump_json(request_payload))
+        try:
+            response = self.model.generate(reflect_msg, temperature=temperature)
+        except Exception as err:
+            print(f"failed to call reflection LLM for {mem.ps.filename}: {err}")
+            response = ""
+        print("=== AGENTIC LLM RESPONSE ===")
+        print(response if isinstance(response, str) else _dump_json(response))
+        mem.reflection = response

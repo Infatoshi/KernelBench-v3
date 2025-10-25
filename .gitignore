@@ -8,6 +8,10 @@ scratch/
 results/*
 runs/*
 outputs/*
+json/*
+json_prev_*/
+plots/*
+data/TritonBench/
 visualizations/*
 cache/*
 !results/timing/

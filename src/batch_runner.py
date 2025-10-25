@@ -18,6 +18,9 @@ from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetCon
 from metrics import compute_core_metrics, load_metrics, parse_jsonl_results, save_metrics
 from providers import verify_model_responds_hello
 
+GREEN = "\033[32m"
+RESET = "\033[0m"
+
 
 def load_yaml_config(yaml_path: str | Path) -> Dict[str, Any]:
     """Load YAML configuration file as a dictionary."""
@@ -349,9 +352,8 @@ def run_batch_benchmark(
     for index, (mode, language, model_entry) in enumerate(run_plan, start=1):
         provider = model_entry.get("provider", yaml_data.get("provider", "unknown"))
         model_id = model_entry.get("model", yaml_data.get("generator_model", "unknown"))
-
-        print(f"[{index}/{total_runs}] {mode.upper()} | {language.upper()} :: {provider}/{model_id}")
-        print("-" * 70)
+        header = f"{mode.lower()} + {language.lower()} + {provider}/{model_id}"
+        print(f"{GREEN}{header}{RESET}")
 
         config = yaml_to_benchmark_config(yaml_data, model_entry, mode, language, cli_overrides)
         fingerprint = fingerprint_config(config)

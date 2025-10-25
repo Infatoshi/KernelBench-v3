@@ -138,7 +138,24 @@ def build_inference_callable(config: "BenchmarkConfig"):
             messages.append({"role": "user", "content": prompt})
         else:
             messages = prompt
-        return provider.generate(messages, max_tokens=generation_limit)
+        print("\n=== RAW LLM REQUEST ===")
+        payload = {
+            "provider": provider.config.provider,
+            "model": provider.config.model,
+            "messages": messages,
+            "max_tokens": generation_limit,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        response = provider.generate(messages, max_tokens=generation_limit)
+        print("=== RAW LLM RESPONSE ===")
+        if isinstance(response, str):
+            print(response)
+        else:
+            try:
+                print(json.dumps(response, indent=2, ensure_ascii=False))
+            except TypeError:
+                print(str(response))
+        return response
 
     return _inference
 
@@ -156,7 +173,24 @@ def build_formatter_callable(config: "BenchmarkConfig"):
             messages = [{"role": "user", "content": prompt}]
         else:
             messages = prompt
-        return formatter_provider.generate(messages, max_tokens=formatter_limit)
+        print("\n=== FORMATTER LLM REQUEST ===")
+        payload = {
+            "provider": formatter_provider.config.provider,
+            "model": formatter_provider.config.model,
+            "messages": messages,
+            "max_tokens": formatter_limit,
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        response = formatter_provider.generate(messages, max_tokens=formatter_limit)
+        print("=== FORMATTER LLM RESPONSE ===")
+        if isinstance(response, str):
+            print(response)
+        else:
+            try:
+                print(json.dumps(response, indent=2, ensure_ascii=False))
+            except TypeError:
+                print(str(response))
+        return response
 
     return _formatter
 
@@ -213,6 +247,7 @@ def _prepare_problem(level: int, problem_id: int, config: "BenchmarkConfig", inf
         "problem_id": problem_id,
         "problem_name": problem_name,
         "ref_arch_src": ref_arch_src,
+        "prompt": prompt,
         "generated_code": generated,
         "raw_completion": raw_completion,
         "formatted_completion": formatted_completion,
@@ -269,6 +304,9 @@ def _cpu_prepare_problem(problem_id: int) -> Dict[str, Any]:
                 "stage": "generation",
             },
             "generated_code": None,
+            "prompt": None,
+            "raw_completion": None,
+            "formatted_completion": None,
         }
         if cpu_profile is not None:
             cpu_profile["cpu_total_s"] = perf_counter() - cpu_start
@@ -387,6 +425,10 @@ def _evaluate_candidate(
                 "percentages": percentages,
             }
 
+        result["prompt"] = candidate.get("prompt")
+        result["raw_completion"] = candidate.get("raw_completion")
+        result["formatted_completion"] = candidate.get("formatted_completion")
+
         return result
     except Exception as exc:  # noqa: BLE001
         return {
@@ -402,6 +444,9 @@ def _evaluate_candidate(
                 "stage": "evaluation",
             },
             "generated_code": candidate.get("generated_code"),
+            "prompt": candidate.get("prompt"),
+            "raw_completion": candidate.get("raw_completion"),
+            "formatted_completion": candidate.get("formatted_completion"),
         }
 
 
@@ -474,12 +519,11 @@ def run(config: "BenchmarkConfig") -> None:
     worker_count = max(1, config.raw_concurrency or 1)
     use_parallel = worker_count > 1 and len(problems) > 1
 
-    if config.verbose:
-        mode = "parallel" if use_parallel else "sequential"
-        print(
-            f"[Raw] Evaluating {len(problems)} problem(s) in {mode} mode "
-            f"using {worker_count if use_parallel else 1} CPU worker(s) with queued GPU execution."
-        )
+    mode = "parallel" if use_parallel else "sequential"
+    print(
+        f"[Raw] Evaluating {len(problems)} problem(s) in {mode} mode "
+        f"using {worker_count if use_parallel else 1} CPU worker(s) with queued GPU execution."
+    )
 
     ctx = multiprocessing.get_context("spawn")
     manager = ctx.Manager()
@@ -513,8 +557,7 @@ def run(config: "BenchmarkConfig") -> None:
         try:
             problem_id, result = future.result()
         except Exception as exc:  # noqa: BLE001
-            if config.verbose:
-                print(f"[Raw] GPU worker raised unexpected error: {exc}")
+            print(f"[Raw] GPU worker raised unexpected error: {exc}")
             return
 
         if problem_id is None:
@@ -583,21 +626,18 @@ def run(config: "BenchmarkConfig") -> None:
                         "generated_code": None,
                     }
                     _update_progress(progress_state)
-                    if config.verbose:
-                        print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
+                    print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
                 else:
-                    if config.verbose:
-                        print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
+                    print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
                     if result and not result.get("queued", True):
                         _update_progress(progress_state)
     else:
         _cpu_initializer(config, gen_cfg.level, job_queue, shared_results, build_root)
         for pid in problems:
-            if config.verbose:
-                print(f"[Raw] Preparing level {gen_cfg.level} problem {pid}")
+            print(f"[Raw] Preparing level {gen_cfg.level} problem {pid}")
             result_info = _cpu_prepare_problem(pid)
-            if result_info and not result_info.get("queued", True):
-                _update_progress(progress_state)
+                if result_info and not result_info.get("queued", True):
+                    _update_progress(progress_state)
 
     for _ in range(gpu_worker_count):
         job_queue.put(None)
@@ -677,8 +717,7 @@ def run(config: "BenchmarkConfig") -> None:
                 label = stage.replace("_", " ")
                 print(f"  - {label}: {count}")
 
-    if config.verbose:
-        print(f"[Raw] Completed run for {len(problems)} problems. Results saved to {results_path}")
+    print(f"[Raw] Completed run for {len(problems)} problems. Results saved to {results_path}")
 
     manager.shutdown()
 
