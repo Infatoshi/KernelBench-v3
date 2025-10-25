@@ -20,6 +20,19 @@ from openai import OpenAI
 import google.generativeai as genai
 import anthropic
 
+# Conditional imports for optional providers
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+
+try:
+    from cerebras.cloud.sdk import Cerebras
+    CEREBRAS_AVAILABLE = True
+except ImportError:
+    CEREBRAS_AVAILABLE = False
+
 # from datasets import load_dataset
 import numpy as np
 from contextlib import contextmanager
@@ -42,6 +55,11 @@ SGLANG_KEY = os.environ.get("SGLANG_API_KEY")  # for Local Deployment
 ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY")
 SAMBANOVA_API_KEY = os.environ.get("SAMBANOVA_API_KEY")
 FIREWORKS_API_KEY = os.environ.get("FIREWORKS_API_KEY")
+XAI_API_KEY = os.environ.get("XAI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY")
+OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "ollama")  # Default dummy key for Ollama
+VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "EMPTY")  # Default for vLLM
 
 
 ########################################################
@@ -89,7 +107,7 @@ def query_server(
     top_k: int = 50, 
     max_tokens: int = 128,  # max output tokens to generate
     num_completions: int = 1,
-    server_port: int = 30000,  # only for local server hosted on SGLang
+    server_port: int = 30000,  # only for local servers (SGLang, Ollama, vLLM)
     server_address: str = "localhost",
     server_type: str = "sglang",
     model_name: str = "default",  # specify model type
@@ -110,6 +128,11 @@ def query_server(
     - Gemini / Google AI Studio
     - Fireworks (OpenAI compatbility)
     - SGLang (Local Server)
+    - XAI (X.AI/Grok)
+    - Groq
+    - Cerebras
+    - Ollama (Local)
+    - vLLM (Local/Remote Server)
     """
     # Select model and client based on arguments
     match server_type:
@@ -152,6 +175,55 @@ def query_server(
             model = model_name
         case "sambanova":
             client = OpenAI(api_key=SAMBANOVA_API_KEY, base_url="https://api.sambanova.ai/v1")
+            model = model_name
+        
+        case "xai":
+            client = OpenAI(
+                api_key=XAI_API_KEY,
+                base_url="https://api.x.ai/v1",
+                timeout=10000000,
+                max_retries=3,
+            )
+            model = model_name
+        
+        case "groq":
+            if not GROQ_AVAILABLE:
+                raise ImportError("Groq SDK not installed. Install with: pip install groq")
+            client = Groq(
+                api_key=GROQ_API_KEY,
+                timeout=10000000,
+                max_retries=3,
+            )
+            model = model_name
+        
+        case "cerebras":
+            if not CEREBRAS_AVAILABLE:
+                raise ImportError("Cerebras SDK not installed. Install with: pip install cerebras-cloud-sdk")
+            client = Cerebras(
+                api_key=CEREBRAS_API_KEY,
+                timeout=10000000,
+                max_retries=3,
+            )
+            model = model_name
+        
+        case "ollama":
+            url = f"http://{server_address}:{server_port}"
+            client = OpenAI(
+                api_key=OLLAMA_API_KEY,
+                base_url=f"{url}/v1",
+                timeout=None,
+                max_retries=0,
+            )
+            model = model_name
+        
+        case "vllm":
+            url = f"http://{server_address}:{server_port}"
+            client = OpenAI(
+                api_key=VLLM_API_KEY,
+                base_url=f"{url}/v1",
+                timeout=None,
+                max_retries=0,
+            )
             model = model_name
             
         case "openai":
@@ -323,6 +395,55 @@ def query_server(
             top_p=top_p,
         )
         outputs = [choice.message.content for choice in response.choices]
+    elif server_type == "xai":
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+        outputs = [choice.message.content for choice in response.choices]
+    elif server_type == "groq":
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+        outputs = [choice.message.content for choice in response.choices]
+    elif server_type == "cerebras":
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+        outputs = [choice.message.content for choice in response.choices]
+    elif server_type in ["ollama", "vllm"]:
+        # OpenAI-compatible local servers
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+        outputs = [choice.message.content for choice in response.choices]
     # for all other kinds of servers, use standard API
     else:
         if type(prompt) == str:
@@ -353,11 +474,14 @@ def query_server(
         return outputs
 
 
-# a list of presets for API server configs
+# Convenience presets for API server configs
+# NOTE: model_name can be ANY string - no validation is performed
+# If the model doesn't exist, the API will return an error naturally
+# These are just suggested defaults that work as of the last update
 SERVER_PRESETS = {
     "deepseek": {
         "temperature": 1.6, 
-        "model_name": "deepseek",
+        "model_name": "deepseek-chat",
         "max_tokens": 4096
     },
     "google": {
@@ -392,6 +516,35 @@ SERVER_PRESETS = {
         "model_name": "Meta-Llama-3.1-405B-Instruct",
         "temperature": 0.1,
         "max_tokens": 8192,
+    },
+    "xai": {  # X.AI Grok models
+        "model_name": "grok-beta",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+    },
+    "groq": {  # Groq (fast inference)
+        "model_name": "llama-3.3-70b-versatile",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+    },
+    "cerebras": {  # Cerebras (ultra-fast inference)
+        "model_name": "llama-4-scout-17b-16e-instruct",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+    },
+    "ollama": {  # Local Ollama
+        "model_name": "llama3.2",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "server_port": 11434,
+        "server_address": "localhost",
+    },
+    "vllm": {  # vLLM server (local or remote)
+        "model_name": "default",
+        "temperature": 0.7,
+        "max_tokens": 4096,
+        "server_port": 8000,
+        "server_address": "localhost",
     },
 }
 
@@ -492,8 +645,10 @@ def extract_first_code(output_string: str, code_language_types: list[str]) -> st
         # sometimes the block of code is ```cpp ... ``` instead of ``` ... ```
         # in this case strip the cpp out
         for code_type in code_language_types:
-            if code.startswith(code_type):
-                code = code[len(code_type) :].strip()
+            pattern = re.compile(rf"^{code_type}\s*", re.IGNORECASE)
+            if pattern.match(code):
+                code = pattern.sub("", code, count=1).lstrip("\n")
+                break
 
         return code
 

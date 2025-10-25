@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openai_gpt-5-nano/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openai_gpt-5-nano"
+  },
+  "config_fingerprint": "2ae8e362c9be7003fb7a9ec6a1b483f079d5a61a6f6005d5ddc03f410688f1c0",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "gpt-5-nano",
+  "provider": "openai",
+  "timestamp": "2025-10-24T08:12:56.111988"
+}

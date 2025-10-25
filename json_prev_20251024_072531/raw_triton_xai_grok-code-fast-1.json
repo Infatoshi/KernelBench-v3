@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_triton_xai_grok-code-fast-1/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_triton_xai_grok-code-fast-1"
+  },
+  "config_fingerprint": "35804fdf4eb8910d7af3aa0cfdc99447b2a4114a80cee4a1fcd9ce6de103e90b",
+  "language": "triton",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "grok-code-fast-1",
+  "provider": "xai",
+  "timestamp": "2025-10-24T05:30:59.727522"
+}

@@ -7,9 +7,13 @@ scratch/
 # **results/
 results/*
 runs/*
+outputs/*
+visualizations/*
 cache/*
 !results/timing/
 .env
 venv
+.venv
 .DS_Store
 .cursor
+test_build/

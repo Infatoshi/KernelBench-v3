@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-pro/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-pro"
+  },
+  "config_fingerprint": "527c755b40151d1f15fee94a08e19e5bb1216dbf44544c649007643342318127",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "gemini-2.5-pro",
+  "provider": "gemini",
+  "timestamp": "2025-10-24T05:38:01.381720"
+}

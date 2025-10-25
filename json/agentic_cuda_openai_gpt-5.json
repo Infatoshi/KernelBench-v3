@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5"
+  },
+  "config_fingerprint": "c7ba9ac60ea7fd55febe3e2240dcd365900a9a1d91539d5b494cd599d2ec3054",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 100.0,
+    "compiled_count": 1,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "gpt-5",
+  "provider": "openai",
+  "timestamp": "2025-10-24T08:54:54.264709"
+}

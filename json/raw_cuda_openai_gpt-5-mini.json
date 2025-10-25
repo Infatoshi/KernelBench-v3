@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openai_gpt-5-mini/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openai_gpt-5-mini"
+  },
+  "config_fingerprint": "bb52ba1691ea0dc60d86536addc0e2ac736e312db168344c7885e5aa2ca7366e",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 100.0,
+    "compiled_count": 1,
+    "correct_count": 1,
+    "correctness_rate": 100.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": -1.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "gpt-5-mini",
+  "provider": "openai",
+  "timestamp": "2025-10-24T08:14:23.517479"
+}

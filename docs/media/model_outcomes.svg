@@ -1,0 +1,240 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='920' height='1304' viewBox='0 0 920 1304'>
+<style> text { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; font-size: 15px; } .header { font-weight: 600; } .mode { font-weight: 600; } .model { font-weight: 500; } </style>
+<rect x='0' y='0' width='920' height='48' fill='#0B1F33' rx='8' ry='8' />
+<text x='110.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Mode</text>
+<text x='390.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Model</text>
+<text x='620.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Compiled</text>
+<text x='740.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Numerically Correct</text>
+<text x='860.0' y='30.0' fill='#FFFFFF' text-anchor='middle' class='header'>Fast@1%</text>
+<rect x='0' y='48' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='48' x2='920' y2='48' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='71.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='71.0' fill='#213547' class='model'>Gemini 2.5 Pro</text>
+<text x='620.0' y='71.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='740.0' y='71.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='860.0' y='71.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='84' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='84' x2='920' y2='84' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='107.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='107.0' fill='#213547' class='model'>Gemini 2.5 Flash</text>
+<text x='620.0' y='107.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='740.0' y='107.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='860.0' y='107.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='120' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='120' x2='920' y2='120' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='143.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='143.0' fill='#213547' class='model'>Claude Sonnet 4.5</text>
+<text x='620.0' y='143.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='740.0' y='143.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='860.0' y='143.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='156' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='156' x2='920' y2='156' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='179.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='179.0' fill='#213547' class='model'>Claude Haiku 4.5</text>
+<text x='620.0' y='179.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='740.0' y='179.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='860.0' y='179.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='192' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='192' x2='920' y2='192' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='215.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='215.0' fill='#213547' class='model'>GPT-5</text>
+<text x='620.0' y='215.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='215.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='215.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='228' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='228' x2='920' y2='228' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='251.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='251.0' fill='#213547' class='model'>GPT-5 Nano</text>
+<text x='620.0' y='251.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='251.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='251.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='264' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='264' x2='920' y2='264' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='287.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='287.0' fill='#213547' class='model'>GPT-5 Mini</text>
+<text x='620.0' y='287.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='287.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='287.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='300' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='300' x2='920' y2='300' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='323.0' fill='#213547' text-anchor='middle'>Raw CUDA</text>
+<text x='232' y='323.0' fill='#213547' class='model'>OpenRouter GLM-4.6</text>
+<text x='620.0' y='323.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='323.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='323.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<line x1='0' y1='336' x2='920' y2='336' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='360' fill='#213547' text-anchor='middle' class='mode'>Raw Triton</text>
+<rect x='0' y='372' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='372' x2='920' y2='372' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='395.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='395.0' fill='#213547' class='model'>Gemini 2.5 Pro</text>
+<text x='620.0' y='395.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='740.0' y='395.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='395.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='408' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='408' x2='920' y2='408' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='431.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='431.0' fill='#213547' class='model'>Gemini 2.5 Flash</text>
+<text x='620.0' y='431.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='740.0' y='431.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='431.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='444' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='444' x2='920' y2='444' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='467.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='467.0' fill='#213547' class='model'>Claude Sonnet 4.5</text>
+<text x='620.0' y='467.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='467.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='467.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='480' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='480' x2='920' y2='480' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='503.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='503.0' fill='#213547' class='model'>Claude Haiku 4.5</text>
+<text x='620.0' y='503.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='503.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='503.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='516' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='516' x2='920' y2='516' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='539.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='539.0' fill='#213547' class='model'>GPT-5</text>
+<text x='620.0' y='539.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='539.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='539.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='552' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='552' x2='920' y2='552' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='575.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='575.0' fill='#213547' class='model'>GPT-5 Nano</text>
+<text x='620.0' y='575.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='575.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='575.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='588' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='588' x2='920' y2='588' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='611.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='611.0' fill='#213547' class='model'>GPT-5 Mini</text>
+<text x='620.0' y='611.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='740.0' y='611.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='611.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<rect x='0' y='624' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='624' x2='920' y2='624' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='647.0' fill='#213547' text-anchor='middle'>Raw Triton</text>
+<text x='232' y='647.0' fill='#213547' class='model'>OpenRouter GLM-4.6</text>
+<text x='620.0' y='647.0' fill='#2E7D32' text-anchor='middle'>100%</text>
+<text x='740.0' y='647.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<text x='860.0' y='647.0' fill='#B71C1C' text-anchor='middle'>0%</text>
+<line x1='0' y1='660' x2='920' y2='660' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='684' fill='#213547' text-anchor='middle' class='mode'>Agentic CUDA</text>
+<rect x='0' y='696' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='696' x2='920' y2='696' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='719.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='719.0' fill='#213547' class='model'>Gemini 2.5 Pro</text>
+<text x='620.0' y='719.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='719.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='719.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='732' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='732' x2='920' y2='732' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='755.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='755.0' fill='#213547' class='model'>Gemini 2.5 Flash</text>
+<text x='620.0' y='755.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='755.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='755.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='768' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='768' x2='920' y2='768' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='791.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='791.0' fill='#213547' class='model'>Claude Sonnet 4.5</text>
+<text x='620.0' y='791.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='791.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='791.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='804' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='804' x2='920' y2='804' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='827.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='827.0' fill='#213547' class='model'>Claude Haiku 4.5</text>
+<text x='620.0' y='827.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='827.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='827.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='840' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='840' x2='920' y2='840' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='863.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='863.0' fill='#213547' class='model'>GPT-5</text>
+<text x='620.0' y='863.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='863.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='863.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='876' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='876' x2='920' y2='876' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='899.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='899.0' fill='#213547' class='model'>GPT-5 Nano</text>
+<text x='620.0' y='899.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='899.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='899.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='912' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='912' x2='920' y2='912' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='935.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='935.0' fill='#213547' class='model'>GPT-5 Mini</text>
+<text x='620.0' y='935.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='935.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='935.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='948' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='948' x2='920' y2='948' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='971.0' fill='#213547' text-anchor='middle'>Agentic CUDA</text>
+<text x='232' y='971.0' fill='#213547' class='model'>OpenRouter GLM-4.6</text>
+<text x='620.0' y='971.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='971.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='971.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<line x1='0' y1='984' x2='920' y2='984' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1008' fill='#213547' text-anchor='middle' class='mode'>Agentic Triton</text>
+<rect x='0' y='1020' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='1020' x2='920' y2='1020' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1043.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1043.0' fill='#213547' class='model'>Gemini 2.5 Pro</text>
+<text x='620.0' y='1043.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1043.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1043.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='1056' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='1056' x2='920' y2='1056' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1079.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1079.0' fill='#213547' class='model'>Gemini 2.5 Flash</text>
+<text x='620.0' y='1079.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1079.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1079.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='1092' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='1092' x2='920' y2='1092' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1115.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1115.0' fill='#213547' class='model'>Claude Sonnet 4.5</text>
+<text x='620.0' y='1115.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1115.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1115.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='1128' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='1128' x2='920' y2='1128' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1151.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1151.0' fill='#213547' class='model'>Claude Haiku 4.5</text>
+<text x='620.0' y='1151.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1151.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1151.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='1164' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='1164' x2='920' y2='1164' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1187.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1187.0' fill='#213547' class='model'>GPT-5</text>
+<text x='620.0' y='1187.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1187.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1187.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='1200' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='1200' x2='920' y2='1200' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1223.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1223.0' fill='#213547' class='model'>GPT-5 Nano</text>
+<text x='620.0' y='1223.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1223.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1223.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='1236' width='920' height='36' fill='#F4F7FB'/>
+<line x1='0' y1='1236' x2='920' y2='1236' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1259.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1259.0' fill='#213547' class='model'>GPT-5 Mini</text>
+<text x='620.0' y='1259.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1259.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1259.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<rect x='0' y='1272' width='920' height='36' fill='#FFFFFF'/>
+<line x1='0' y1='1272' x2='920' y2='1272' stroke='#D0D7E3' stroke-width='1'/>
+<text x='110.0' y='1295.0' fill='#213547' text-anchor='middle'>Agentic Triton</text>
+<text x='232' y='1295.0' fill='#213547' class='model'>OpenRouter GLM-4.6</text>
+<text x='620.0' y='1295.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='740.0' y='1295.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<text x='860.0' y='1295.0' fill='#5C6F82' text-anchor='middle'>—</text>
+<line x1='0' y1='1308' x2='920' y2='1308' stroke='#D0D7E3' stroke-width='1'/>
+</svg>

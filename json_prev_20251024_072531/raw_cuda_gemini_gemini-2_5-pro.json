@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_gemini_gemini-2_5-pro/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_gemini_gemini-2_5-pro"
+  },
+  "config_fingerprint": "220d7de9fcb96fb2a6f852ab5f569fe42c723c65f8e8d28394371e59f5287f32",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "gemini-2.5-pro",
+  "provider": "gemini",
+  "timestamp": "2025-10-24T05:22:23.415657"
+}

@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openrouter_z-ai_glm-4_6/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openrouter_z-ai_glm-4_6"
+  },
+  "config_fingerprint": "84d815ad197a0fa7873d89d09d9b896e14d64b070a302beffacda93817be0881",
+  "language": "triton",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "z-ai/glm-4.6",
+  "provider": "openrouter",
+  "timestamp": "2025-10-24T05:30:43.889653"
+}

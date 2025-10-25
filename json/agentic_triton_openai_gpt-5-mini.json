@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-mini/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-mini"
+  },
+  "config_fingerprint": "d13559e75c7e2692da4ba64ab7e97b70eaf885532c7b15f1cef7775d8a8ae9a1",
+  "language": "triton",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "gpt-5-mini",
+  "provider": "openai",
+  "timestamp": "2025-10-24T16:27:27.918204"
+}

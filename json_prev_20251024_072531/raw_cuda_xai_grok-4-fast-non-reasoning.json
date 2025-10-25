@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_xai_grok-4-fast-non-reasoning/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_xai_grok-4-fast-non-reasoning"
+  },
+  "config_fingerprint": "fa1d94fb71ba3dab710b2c6f350e106fc0faa437b2626c5abab7890d8827d8f1",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "grok-4-fast-non-reasoning",
+  "provider": "xai",
+  "timestamp": "2025-10-24T05:25:55.643146"
+}

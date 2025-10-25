@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-haiku-4-5/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-haiku-4-5"
+  },
+  "config_fingerprint": "179eff82a67b42496ab8c01c62905b06ac2a2cc9e91704824e972eb013c3a59c",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 100.0,
+    "compiled_count": 1,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "claude-haiku-4-5",
+  "provider": "anthropic",
+  "timestamp": "2025-10-24T08:45:23.560924"
+}

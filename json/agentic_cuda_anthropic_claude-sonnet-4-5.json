@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-sonnet-4-5/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-sonnet-4-5"
+  },
+  "config_fingerprint": "23e6da67448df172041ecf1ea0b00d545f534e98113ae40647a53a225e1b537f",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 100.0,
+    "compiled_count": 1,
+    "correct_count": 1,
+    "correctness_rate": 100.0,
+    "fast_1_rate": 100.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "claude-sonnet-4-5",
+  "provider": "anthropic",
+  "timestamp": "2025-10-24T08:44:25.486838"
+}

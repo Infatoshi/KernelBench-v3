@@ -1,0 +1,1013 @@
+{
+  "artifacts": {
+    "json_dir": "json",
+    "plots_dir": "plots"
+  },
+  "cached": 35,
+  "completed": 13,
+  "config": "configs/all_providers.yaml",
+  "failed": 0,
+  "generated_at": "2025-10-24T16:51:59.295231",
+  "results": [
+    {
+      "config_fingerprint": "abe357ed5ec72fcae3cbeb64de992281714afc47c7ddb14c897b684d2b4d5b53",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_gemini_gemini-2_5-pro.json",
+      "mode": "raw",
+      "model": "gemini-2.5-pro",
+      "provider": "gemini",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_gemini_gemini-2_5-pro/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:06:49.859286"
+    },
+    {
+      "config_fingerprint": "eb7197690dbea81c6de4c25ebc5e242081358fdaa1db8260c9e29dde71e84800",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_gemini_gemini-2_5-flash.json",
+      "mode": "raw",
+      "model": "gemini-2.5-flash",
+      "provider": "gemini",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_gemini_gemini-2_5-flash/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:07:34.151096"
+    },
+    {
+      "config_fingerprint": "4f3f088f0db6822f7abf4dab82c48e148018fb4c66d7a1b83fda46572021010a",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_anthropic_claude-sonnet-4-5.json",
+      "mode": "raw",
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_anthropic_claude-sonnet-4-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:08:28.940557"
+    },
+    {
+      "config_fingerprint": "b6e40fe8083a76fc27be9b13ed3f7c2786db2f64543a27e30620634ffc32dd4f",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_anthropic_claude-haiku-4-5.json",
+      "mode": "raw",
+      "model": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_anthropic_claude-haiku-4-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:09:12.105415"
+    },
+    {
+      "config_fingerprint": "a4bde8089ec48553e6adc9e68a7fc00ea24954b1bab930d83ad324c5965c1f0e",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_openai_gpt-5.json",
+      "mode": "raw",
+      "model": "gpt-5",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openai_gpt-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:12:04.442560"
+    },
+    {
+      "config_fingerprint": "2ae8e362c9be7003fb7a9ec6a1b483f079d5a61a6f6005d5ddc03f410688f1c0",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_openai_gpt-5-nano.json",
+      "mode": "raw",
+      "model": "gpt-5-nano",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openai_gpt-5-nano/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:12:56.111988"
+    },
+    {
+      "config_fingerprint": "bb52ba1691ea0dc60d86536addc0e2ac736e312db168344c7885e5aa2ca7366e",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_openai_gpt-5-mini.json",
+      "mode": "raw",
+      "model": "gpt-5-mini",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openai_gpt-5-mini/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:14:23.517479"
+    },
+    {
+      "config_fingerprint": "8ebede15e81ec340d09d79ceb10d4e819335eb0cf94aa2529ee9077901f21525",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_openrouter_z-ai_glm-4_6.json",
+      "mode": "raw",
+      "model": "z-ai/glm-4.6",
+      "provider": "openrouter",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openrouter_z-ai_glm-4_6/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:16:19.135710"
+    },
+    {
+      "config_fingerprint": "a119905836e27525c80fb0ded26963e2cc9b756760c46cfacff736c6b4e75962",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_xai_grok-code-fast-1.json",
+      "mode": "raw",
+      "model": "grok-code-fast-1",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_xai_grok-code-fast-1/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:17:11.945379"
+    },
+    {
+      "config_fingerprint": "46f0ec3af12942355456d3a28f232a83309f8bda7c44eb38a3c54377cfd18e5a",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_xai_grok-4-fast-reasoning.json",
+      "mode": "raw",
+      "model": "grok-4-fast-reasoning",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_xai_grok-4-fast-reasoning/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:18:07.648998"
+    },
+    {
+      "config_fingerprint": "ba6422ee15f6535803bd97f0843dd4bb33e4face99c506ec4b1e661d8dfe7b4d",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_xai_grok-4-fast-non-reasoning.json",
+      "mode": "raw",
+      "model": "grok-4-fast-non-reasoning",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_xai_grok-4-fast-non-reasoning/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:18:26.888622"
+    },
+    {
+      "config_fingerprint": "8860d7d1a7486a055a752f340e83ff463e21bae2d6768ecf2775d1a25ef9bf52",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": -1.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_cuda_xai_grok-4-0709.json",
+      "mode": "raw",
+      "model": "grok-4-0709",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_xai_grok-4-0709/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:20:11.633009"
+    },
+    {
+      "config_fingerprint": "b3df49f1b64745063a65a8d866402e1a778c879728e074d0c51121fddb282fc4",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_gemini_gemini-2_5-pro.json",
+      "mode": "raw",
+      "model": "gemini-2.5-pro",
+      "provider": "gemini",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_gemini_gemini-2_5-pro/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:21:01.916258"
+    },
+    {
+      "config_fingerprint": "4d59b587b2e1261b133fda600434492f0ec1016750efd822fa3ccea89762609f",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_gemini_gemini-2_5-flash.json",
+      "mode": "raw",
+      "model": "gemini-2.5-flash",
+      "provider": "gemini",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_gemini_gemini-2_5-flash/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:21:37.597630"
+    },
+    {
+      "config_fingerprint": "182152bbdf28b4d9369a663fc5a9341676d8c743ab3170c32d67f09717d68cbc",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_anthropic_claude-sonnet-4-5.json",
+      "mode": "raw",
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_anthropic_claude-sonnet-4-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:21:59.633259"
+    },
+    {
+      "config_fingerprint": "f75af3fc454e8ceb1154c4f1f1a1a085894de8d875d46f13afa1f99411c4c29b",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_anthropic_claude-haiku-4-5.json",
+      "mode": "raw",
+      "model": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_anthropic_claude-haiku-4-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:22:13.966347"
+    },
+    {
+      "config_fingerprint": "02321bd8da17ef35cb70d6ac0acd33bb6e1c4cdcc0a0a7e16e3eeec2d753556b",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_openai_gpt-5.json",
+      "mode": "raw",
+      "model": "gpt-5",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openai_gpt-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:23:26.073171"
+    },
+    {
+      "config_fingerprint": "a52668f2b22788ed0395a8632d3ea84426cecdb69ec81e014145ca4e540c0ed0",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_openai_gpt-5-nano.json",
+      "mode": "raw",
+      "model": "gpt-5-nano",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openai_gpt-5-nano/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:24:22.064587"
+    },
+    {
+      "config_fingerprint": "2f721884a885ba082807d0c67585335ad2a073948a300f0c21e1e8b70f1cbc1a",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_openai_gpt-5-mini.json",
+      "mode": "raw",
+      "model": "gpt-5-mini",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openai_gpt-5-mini/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:25:14.759517"
+    },
+    {
+      "config_fingerprint": "6b63e5d3e33543893d3eb09dc62ead7c08cc28a5e1958b0cdede029d0d4bfb74",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_openrouter_z-ai_glm-4_6.json",
+      "mode": "raw",
+      "model": "z-ai/glm-4.6",
+      "provider": "openrouter",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openrouter_z-ai_glm-4_6/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:28:13.244189"
+    },
+    {
+      "config_fingerprint": "0353517c8aa4ec7c2a0f43df7fadc532ce3412bc741fa49db70631123e403d09",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_xai_grok-code-fast-1.json",
+      "mode": "raw",
+      "model": "grok-code-fast-1",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_xai_grok-code-fast-1/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:28:37.020727"
+    },
+    {
+      "config_fingerprint": "94fa5e0ca3da8ac95345860438182ad9821c9b2a563c26df18770a7d95fa6874",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_xai_grok-4-fast-reasoning.json",
+      "mode": "raw",
+      "model": "grok-4-fast-reasoning",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_xai_grok-4-fast-reasoning/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:29:09.757399"
+    },
+    {
+      "config_fingerprint": "d49e481744b0e4e22540ced5ea8fc1a55c59bae0b030022e0e349f8d8d0db8e9",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_xai_grok-4-fast-non-reasoning.json",
+      "mode": "raw",
+      "model": "grok-4-fast-non-reasoning",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_xai_grok-4-fast-non-reasoning/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:29:22.993851"
+    },
+    {
+      "config_fingerprint": "d11e580cae2634fc98ad8f350348ebf28245d060536b0f3b14a69d64203497dd",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/raw_triton_xai_grok-4-0709.json",
+      "mode": "raw",
+      "model": "grok-4-0709",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/runs/raw_triton_xai_grok-4-0709/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:32:49.218367"
+    },
+    {
+      "config_fingerprint": "f56770b377065abb6926b2ccd974cf54249068b743c5ddc97cfab296b1083eba",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_gemini_gemini-2_5-pro.json",
+      "mode": "agentic",
+      "model": "gemini-2.5-pro",
+      "provider": "gemini",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-pro/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:37:23.315066"
+    },
+    {
+      "config_fingerprint": "b41998166b09638f7bb231b836ba0f165adff71d48e2b7ed896e1426581a1dfe",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_gemini_gemini-2_5-flash.json",
+      "mode": "agentic",
+      "model": "gemini-2.5-flash",
+      "provider": "gemini",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-flash/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:41:39.848453"
+    },
+    {
+      "config_fingerprint": "23e6da67448df172041ecf1ea0b00d545f534e98113ae40647a53a225e1b537f",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 100.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_anthropic_claude-sonnet-4-5.json",
+      "mode": "agentic",
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-sonnet-4-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:44:25.486838"
+    },
+    {
+      "config_fingerprint": "179eff82a67b42496ab8c01c62905b06ac2a2cc9e91704824e972eb013c3a59c",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_anthropic_claude-haiku-4-5.json",
+      "mode": "agentic",
+      "model": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-haiku-4-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:45:23.560924"
+    },
+    {
+      "config_fingerprint": "c7ba9ac60ea7fd55febe3e2240dcd365900a9a1d91539d5b494cd599d2ec3054",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_openai_gpt-5.json",
+      "mode": "agentic",
+      "model": "gpt-5",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:54:54.264709"
+    },
+    {
+      "config_fingerprint": "2eec64d0e1cc06755b56553ad45da43aa63f873ac16ee2027d492183470b2838",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_openai_gpt-5-nano.json",
+      "mode": "agentic",
+      "model": "gpt-5-nano",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-nano/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T08:59:40.582229"
+    },
+    {
+      "config_fingerprint": "673f4a522b1f935c9bcd2da657ea62c6b60cf0d477b5f0696710dcd884f8b7e8",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_openai_gpt-5-mini.json",
+      "mode": "agentic",
+      "model": "gpt-5-mini",
+      "provider": "openai",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-mini/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T09:04:13.224596"
+    },
+    {
+      "config_fingerprint": "da7c11f9420352499833646f9ecd8d5a507a053217bf25450fad16f68b26cd5d",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_openrouter_z-ai_glm-4_6.json",
+      "mode": "agentic",
+      "model": "z-ai/glm-4.6",
+      "provider": "openrouter",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_openrouter_z-ai_glm-4_6/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T09:06:33.537080"
+    },
+    {
+      "config_fingerprint": "e00594d210f71133f3694892643994241841d7ad067e06258af6b22281694edf",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 100.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_xai_grok-code-fast-1.json",
+      "mode": "agentic",
+      "model": "grok-code-fast-1",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-code-fast-1/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T09:09:18.081790"
+    },
+    {
+      "config_fingerprint": "633c4efd7a4a767dd0b531a768088b8800a64645282e360707adc33df6eb045d",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_xai_grok-4-fast-reasoning.json",
+      "mode": "agentic",
+      "model": "grok-4-fast-reasoning",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-reasoning/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T09:13:01.634746"
+    },
+    {
+      "config_fingerprint": "b124b454eb0d216459d61e7732a75b13646acb89a84dcfb6f7ddf1cd2a822344",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_xai_grok-4-fast-non-reasoning.json",
+      "mode": "agentic",
+      "model": "grok-4-fast-non-reasoning",
+      "provider": "xai",
+      "results_path": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-non-reasoning/results.jsonl",
+      "status": "cached",
+      "timestamp": "2025-10-24T09:13:35.566476"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-0709/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-0709"
+      },
+      "config_fingerprint": "3cc962a9cb7f20feedad3a185f4c78b51ef35a2bfeb279163129c92b89a3a548",
+      "language": "cuda",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 100.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_cuda_xai_grok-4-0709.json",
+      "mode": "agentic",
+      "model": "grok-4-0709",
+      "provider": "xai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:04:23.246856"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-pro/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-pro"
+      },
+      "config_fingerprint": "60079760c778824721a42a272ec7893d9e4f661db053c00f421117cd8c1499a0",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_gemini_gemini-2_5-pro.json",
+      "mode": "agentic",
+      "model": "gemini-2.5-pro",
+      "provider": "gemini",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:08:27.651594"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-flash/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-flash"
+      },
+      "config_fingerprint": "e41eba105f533e1993cc147a8fb40077d0969883e4c428fb1344c868f553f9ab",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_gemini_gemini-2_5-flash.json",
+      "mode": "agentic",
+      "model": "gemini-2.5-flash",
+      "provider": "gemini",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:10:28.733536"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-sonnet-4-5/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-sonnet-4-5"
+      },
+      "config_fingerprint": "ebc75459ab441803435adf0ddbb5cb7fc16d92c2995cc95dde8932a3d7688fae",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 100.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_anthropic_claude-sonnet-4-5.json",
+      "mode": "agentic",
+      "model": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:13:19.066461"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-haiku-4-5/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_anthropic_claude-haiku-4-5"
+      },
+      "config_fingerprint": "1ae6c0067a0a304c909d545c6c0aa31b8ccb7e3435bde03183e7e7bf295af42d",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_anthropic_claude-haiku-4-5.json",
+      "mode": "agentic",
+      "model": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:14:22.469286"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5"
+      },
+      "config_fingerprint": "2fdab1f013a8ab65ea41f2b879e6a12e1998cfa3bce48e8c6cdd29707d0916cc",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_openai_gpt-5.json",
+      "mode": "agentic",
+      "model": "gpt-5",
+      "provider": "openai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:18:42.271777"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-nano/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-nano"
+      },
+      "config_fingerprint": "4c3342d28669ad4f4082708cc5a703d57e3d854d75eaef84ccccbb6b2c472170",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_openai_gpt-5-nano.json",
+      "mode": "agentic",
+      "model": "gpt-5-nano",
+      "provider": "openai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:22:32.614923"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-mini/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_openai_gpt-5-mini"
+      },
+      "config_fingerprint": "d13559e75c7e2692da4ba64ab7e97b70eaf885532c7b15f1cef7775d8a8ae9a1",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_openai_gpt-5-mini.json",
+      "mode": "agentic",
+      "model": "gpt-5-mini",
+      "provider": "openai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:27:27.918204"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_openrouter_z-ai_glm-4_6/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_openrouter_z-ai_glm-4_6"
+      },
+      "config_fingerprint": "7dcadb81566c4f48341aa1d825ee4f2944c725dabf4db38e971018785fec3ae3",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_openrouter_z-ai_glm-4_6.json",
+      "mode": "agentic",
+      "model": "z-ai/glm-4.6",
+      "provider": "openrouter",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:31:41.484527"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-code-fast-1/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-code-fast-1"
+      },
+      "config_fingerprint": "c83e030effbfef91883711a5eafc5dbaaebfb03f5b63203fbf4e3b9583fdad37",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 100.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_xai_grok-code-fast-1.json",
+      "mode": "agentic",
+      "model": "grok-code-fast-1",
+      "provider": "xai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:33:48.128532"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-reasoning/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-reasoning"
+      },
+      "config_fingerprint": "0f0c5ef232c09f2be8b698c656aea56a84b8d4628969f9f3c83c0df585bd825d",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_xai_grok-4-fast-reasoning.json",
+      "mode": "agentic",
+      "model": "grok-4-fast-reasoning",
+      "provider": "xai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:37:07.903662"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-non-reasoning/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-non-reasoning"
+      },
+      "config_fingerprint": "6c786db635665ae4691c13bcff8e0648bc12c4449ede22c034cf980d6df9be7f",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 0.0,
+        "compiled_count": 0,
+        "correct_count": 0,
+        "correctness_rate": 0.0,
+        "fast_1_rate": 0.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_xai_grok-4-fast-non-reasoning.json",
+      "mode": "agentic",
+      "model": "grok-4-fast-non-reasoning",
+      "provider": "xai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:38:00.613922"
+    },
+    {
+      "artifacts": {
+        "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-0709/results.jsonl",
+        "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-0709"
+      },
+      "config_fingerprint": "1cf0c6fb17f14b7adec512c6a660c47b255ffe0ba497e11995e48e13c1d55d80",
+      "language": "triton",
+      "metrics": {
+        "compilation_rate": 100.0,
+        "compiled_count": 1,
+        "correct_count": 1,
+        "correctness_rate": 100.0,
+        "fast_1_rate": 100.0,
+        "mean_runtime": 0.0,
+        "total_problems": 1
+      },
+      "metrics_path": "json/agentic_triton_xai_grok-4-0709.json",
+      "mode": "agentic",
+      "model": "grok-4-0709",
+      "provider": "xai",
+      "status": "completed",
+      "timestamp": "2025-10-24T16:51:59.295020"
+    }
+  ],
+  "total_targets": 48
+}

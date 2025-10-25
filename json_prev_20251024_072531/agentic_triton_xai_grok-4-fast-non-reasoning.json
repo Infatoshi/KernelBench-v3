@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-non-reasoning/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_xai_grok-4-fast-non-reasoning"
+  },
+  "config_fingerprint": "6c7edf143221bf49dcc2414a3d10ce84d15583fc1ebb2593a47395e802482f86",
+  "language": "triton",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "grok-4-fast-non-reasoning",
+  "provider": "xai",
+  "timestamp": "2025-10-24T07:10:05.928858"
+}

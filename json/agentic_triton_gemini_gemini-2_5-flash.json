@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-flash/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_gemini_gemini-2_5-flash"
+  },
+  "config_fingerprint": "e41eba105f533e1993cc147a8fb40077d0969883e4c428fb1344c868f553f9ab",
+  "language": "triton",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "gemini-2.5-flash",
+  "provider": "gemini",
+  "timestamp": "2025-10-24T16:10:28.733536"
+}

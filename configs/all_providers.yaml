@@ -1,0 +1,108 @@
+description: Unified benchmark config covering Google, Anthropic, OpenAI, and OpenRouter models.
+
+modes:
+  - raw
+  - agentic
+
+languages:
+  - cuda
+  - triton
+
+models:
+  - provider: gemini
+    model: gemini-2.5-pro
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: gemini
+    model: gemini-2.5-flash
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: anthropic
+    model: claude-sonnet-4-5
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: anthropic
+    model: claude-haiku-4-5
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: openai
+    model: gpt-5
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: openai
+    model: gpt-5-nano
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: openai
+    model: gpt-5-mini
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: openrouter
+    model: z-ai/glm-4.6
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: xai
+    model: grok-code-fast-1
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: xai
+    model: grok-4-fast-reasoning
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: xai
+    model: grok-4-fast-non-reasoning
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+  - provider: xai
+    model: grok-4-0709
+    raw_concurrency: 1
+    raw_gpu_concurrency: 1
+    raw_max_jobs: 1
+
+defaults:
+  num_runs: 1
+  profile_stages: true
+  raw:
+    cpu_concurrency: 1
+    gpu_concurrency: 1
+    max_jobs: 1
+
+verbose: true
+profile_stages: true
+fast_p_threshold: null
+raw_concurrency: 1
+raw_gpu_concurrency: 1
+raw_max_jobs: 1
+
+hardware:
+  gpu_architecture: Ampere
+  gpu_id: 0
+
+problems:
+  levels: [1, 2]
+  problem_ids: null
+  max_problems: 100
+
+agentic:
+  max_debug_attempts: 3
+  max_optimization_cycles: 2
+  reflector_model: gpt-4-turbo
+  optimizer_model: gpt-4-turbo
+
+artifacts:
+  json_dir: json
+  plots_dir: plots
+
+visualization:
+  enabled: true

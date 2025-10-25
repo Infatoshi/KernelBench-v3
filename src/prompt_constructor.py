@@ -1,5 +1,9 @@
 import os
-from .utils import read_file
+
+try:  # Support executing as part of the src package or standalone
+    from .utils import read_file
+except ImportError:  # pragma: no cover - fallback when run via top-level import
+    from utils import read_file
 
 
 """
@@ -39,7 +43,13 @@ PROBLEM_STATEMENT = """You write custom CUDA kernels to replace the pytorch oper
     You have complete freedom to choose the set of operators you want to replace. You may make the decision to replace some operators with custom CUDA kernels and leave others unchanged. You may replace multiple operators with custom implementations, consider operator fusion opportunities (combining multiple operators into a single kernel, for example, combining matmul+relu), or algorithmic changes (such as online softmax). You are only limited by your imagination.\n
 """
 PROBLEM_INSTRUCTION = """
-Optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code! \n
+Optimize the architecture named Model with custom CUDA operators and emit a drop-in replacement called ModelNew. Follow this contract exactly:
+1. Reply with a single Markdown code block labeled `python` and no additional prose before or after it.
+2. Begin the block with these imports exactly once: `import torch`, `import torch.nn as nn`, `from torch.utils.cpp_extension import load_inline`.
+3. Define at least one CUDA kernel string plus a `functions` dictionary that calls `load_inline` to compile it, and expose Python wrapper functions that launch the kernels with correct grid and block dimensions.
+4. Implement a complete `ModelNew` class whose `__init__` signature matches `Model` and whose `forward` uses the wrapper functions. Preserve all tensor shapes returned by the original model.
+5. Do not include unit tests, benchmarking harnesses, placeholder comments, or explanatory text. Only runnable production code is allowed.
+6. Never reference symbols you did not define or import within the block.
 """
 
 
@@ -73,7 +83,28 @@ def prompt_generate_custom_cuda(
 PROBLEM_STATEMENT_CLEANED = """You write custom CUDA kernels to replace the pytorch operators in the given architecture to get speedups.\n\nYou have complete freedom to choose the set of operators you want to replace. You may make the decision to replace some operators with custom CUDA kernels and leave others unchanged. You may replace multiple operators with custom implementations, consider operator fusion opportunities (combining multiple operators into a single kernel, for example, combining matmul+relu), or algorithmic changes (such as online softmax). You are only limited by your imagination.\n
 """
 PROBLEM_INSTRUCTION_CLEANED = """
-Optimize the architecture named Model with custom CUDA operators! Name your optimized output architecture ModelNew. Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is fully functional. Just output the new model code, no other text, and NO testing code! \n
+Optimize the architecture named Model with custom CUDA operators and emit a drop-in replacement called ModelNew. Follow this contract exactly:
+1. Reply with a single Markdown code block labeled `python` and no additional prose before or after it.
+2. Begin the block with these imports exactly once: `import torch`, `import torch.nn as nn`, `from torch.utils.cpp_extension import load_inline`.
+3. Define at least one CUDA kernel string plus a `functions` dictionary that calls `load_inline` to compile it, and expose Python wrapper functions that launch the kernels with correct grid and block dimensions.
+4. Implement a complete `ModelNew` class whose `__init__` signature matches `Model` and whose `forward` uses the wrapper functions. Preserve all tensor shapes returned by the original model.
+5. Do not include unit tests, benchmarking harnesses, placeholder comments, or explanatory text. Only runnable production code is allowed.
+6. Never reference symbols you did not define or import within the block.
+"""
+
+
+PROBLEM_STATEMENT_TRITON = """You write custom GPU kernels in the Triton language to replace the PyTorch operators in the given architecture to achieve speedups.\n
+You may mix Triton kernels with standard PyTorch operations, but ensure every custom kernel is implemented with `@triton.jit` and wrapped so that `ModelNew` can call it seamlessly.\n"""
+
+PROBLEM_INSTRUCTION_TRITON = """
+Optimize the architecture named Model with custom Triton kernels and output a drop-in replacement called ModelNew. When you respond:
+1. Emit exactly one Markdown code block labeled `python` and nothing else.
+2. Start with these imports in order: `import torch`, `import torch.nn as nn`, `import triton`, `import triton.language as tl`.
+3. Implement each custom kernel with `@triton.jit`, provide launch-time wrappers that compute grid sizes and strides, and ensure the wrappers are invoked from ModelNew.
+4. Keep ModelNew's constructor signature identical to Model's and preserve all output tensor shapes.
+5. Avoid tests, benchmarking, or explanatory text; only include runnable library code.
+6. Do not use dynamic decorators such as `triton.autotune`; return a single deterministic kernel implementation per operation.
+7. Reference only symbols defined or imported inside the code block.
 """
 
 def prompt_generate_custom_cuda_fewshot_and_template(ref_arch_src: str, shots: list) -> str:
@@ -347,6 +378,32 @@ def prompt_generate_custom_cuda_from_prompt_template(ref_arch_src: str) -> str:
     return prompt_generate_custom_cuda(arch, example_arch, example_new_arch)
 
 
+def prompt_generate_custom_triton_from_template(ref_arch_src: str) -> str:
+    """Generate a Triton-focused prompt mirroring the CUDA template flow."""
+
+    prompt = PROBLEM_STATEMENT_TRITON
+    example_arch_path = os.path.join(
+        REPO_TOP_PATH, "src/prompts/model_ex_add.py"
+    )
+    example_triton_path = os.path.join(
+        REPO_TOP_PATH, "src/prompts/model_new_ex_add_triton.py"
+    )
+    if os.path.exists(example_arch_path) and os.path.exists(example_triton_path):
+        example_arch = read_file(example_arch_path)
+        example_triton = read_file(example_triton_path)
+        prompt += "\nHere is an example that meets the contract:\n```\n"
+        prompt += example_arch
+        prompt += "\n```\nbecomes\n```\n"
+        prompt += example_triton
+        prompt += "\n```\n"
+    prompt += "\nYou are given the following architecture:\n\n```\n"
+    prompt += ref_arch_src
+    prompt += "\n```\n"
+    prompt += PROBLEM_INSTRUCTION_TRITON
+    prompt += "\nEnsure ModelNew calls the Triton kernels and returns the same tensor shapes as the reference Model."
+    return prompt
+
+
 def prompt_generate_prompt_with_hardware_info_from_template(ref_arch_src: str, gpu_name: str) -> str:
     """
     Similar to prompt_generate_custom_cuda_from_prompt_template, 
@@ -456,10 +513,47 @@ Here are some best practices for writing CUDA kernels on GPU: \n\n"""
     return prompt
 
 
-    return Nonoe
+FORMATTER_SYSTEM_PROMPT = (
+    "You are a GPU kernel formatting assistant. Always output a single runnable "
+    "KernelBench solution as a python fenced code block that obeys the ModelNew contract."
+)
 
 
+def build_formatter_messages(
+    language: str,
+    reference_architecture: str,
+    original_prompt: str,
+    raw_completion: str | None,
+) -> list[dict[str, str]]:
+    """Construct messages for a formatting LLM that enforces KernelBench contracts."""
+    contract = PROBLEM_INSTRUCTION if language == "cuda" else PROBLEM_INSTRUCTION_TRITON
+    completion_text = raw_completion or ""
+    user_content = f"""Rewrite the raw completion so it satisfies the KernelBench contract.
 
+Contract requirements:
+{contract.strip()}
+
+Reference architecture:
+```
+{reference_architecture.strip()}
+```
+
+Original prompt:
+```
+{original_prompt.strip()}
+```
+
+Raw completion:
+```
+{completion_text.strip()}
+```
+
+Output exactly one ```python fenced code block that implements ModelNew per the contract.
+Do not add commentary, tests, or extra markdown."""
+    return [
+        {"role": "system", "content": FORMATTER_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
 
 
 def prompt_fix_compile(ref_arch_src, custom_cuda, metadata):

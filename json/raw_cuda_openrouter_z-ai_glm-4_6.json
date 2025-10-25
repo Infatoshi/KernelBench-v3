@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openrouter_z-ai_glm-4_6/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_cuda_openrouter_z-ai_glm-4_6"
+  },
+  "config_fingerprint": "8ebede15e81ec340d09d79ceb10d4e819335eb0cf94aa2529ee9077901f21525",
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 100.0,
+    "compiled_count": 1,
+    "correct_count": 1,
+    "correctness_rate": 100.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": -1.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "z-ai/glm-4.6",
+  "provider": "openrouter",
+  "timestamp": "2025-10-24T08:16:19.135710"
+}

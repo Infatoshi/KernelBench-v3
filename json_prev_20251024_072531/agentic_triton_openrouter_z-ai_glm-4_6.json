@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/outputs/agentic_openrouter_z-ai_glm-4_6/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/outputs/agentic_openrouter_z-ai_glm-4_6"
+  },
+  "config_fingerprint": "86bd22226d7ce02087fba8dd908a8e97e966fcddab736d2a5df58df2b1be92c0",
+  "language": "triton",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "agentic",
+  "model": "z-ai/glm-4.6",
+  "provider": "openrouter",
+  "timestamp": "2025-10-24T07:04:38.762863"
+}

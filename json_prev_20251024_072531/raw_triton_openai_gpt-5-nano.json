@@ -1,0 +1,21 @@
+{
+  "artifacts": {
+    "results_jsonl": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openai_gpt-5-nano/results.jsonl",
+    "run_dir": "/home/infatoshi/KernelBench-v3/runs/raw_triton_openai_gpt-5-nano"
+  },
+  "config_fingerprint": "cfa6ef7bd89eebb79c5f38333b078d53ca3d45a101e984dc8dfd9ee12eeeabd0",
+  "language": "triton",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "fast_1_rate": 0.0,
+    "mean_runtime": 0.0,
+    "total_problems": 1
+  },
+  "mode": "raw",
+  "model": "gpt-5-nano",
+  "provider": "openai",
+  "timestamp": "2025-10-24T05:29:22.819362"
+}
