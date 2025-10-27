@@ -44,12 +44,25 @@ _PROVIDER_API_KEY_ALIASES: Dict[str, Iterable[str]] = {
 }
 
 
+def provider_api_key_env_candidates(provider: str) -> tuple[str, ...]:
+    """Return preferred environment variable names for a provider API key."""
+    provider_slug = provider.lower()
+    aliases = list(_PROVIDER_API_KEY_ALIASES.get(provider_slug, ()))
+    scoped_key = f"KB3_LLM_API_KEY_{provider_slug.upper()}"
+    candidates = [*aliases, scoped_key, "KB3_LLM_API_KEY"]
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate and candidate not in seen:
+            ordered.append(candidate)
+            seen.add(candidate)
+    return tuple(ordered)
+
+
 def resolve_provider_api_key(provider: str) -> str | None:
     """Resolve provider API keys from common environment variable names."""
-    provider_slug = provider.lower()
-    candidates = list(_PROVIDER_API_KEY_ALIASES.get(provider_slug, ()))
-
-    for env_name in candidates:
+    for env_name in provider_api_key_env_candidates(provider):
         value = os.getenv(env_name)
         if value:
             return value

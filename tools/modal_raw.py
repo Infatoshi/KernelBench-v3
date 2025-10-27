@@ -11,8 +11,55 @@ from typing import Iterable, Sequence
 
 import modal
 
+REPO_NAME = "KernelBench-v3"
+_SRC_MARKER = Path("src") / "modal_support" / "config.py"
+
+
 # Ensure local packages are importable when Modal loads this module.
-REPO_ROOT = Path(__file__).resolve().parent.parent
+def _detect_repo_root() -> Path:
+    """Return the repository root for both local and Modal executions."""
+
+    def _is_repo_root(path: Path) -> bool:
+        return (path / _SRC_MARKER).exists()
+
+    script_path = Path(__file__).resolve()
+    script_parent = script_path.parent
+
+    raw_candidates: list[Path] = []
+
+    env_repo = os.environ.get("KB3_MODAL_REPO_ROOT")
+    if env_repo:
+        raw_candidates.append(Path(env_repo))
+
+    # Common Modal mount points.
+    raw_candidates.append(Path("/workspace_src"))
+    raw_candidates.append(Path("/root") / REPO_NAME)
+
+    # Fallbacks based on the script location.
+    raw_candidates.extend([script_parent, script_parent.parent, script_parent / REPO_NAME])
+
+    # De-duplicate while preserving order.
+    candidates: list[Path] = []
+    seen: set[str] = set()
+    for candidate in raw_candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(candidate)
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=False)
+        except RuntimeError:  # pragma: no cover - defensive for unusual filesystems
+            resolved = candidate
+        if _is_repo_root(resolved):
+            return resolved
+
+    raise RuntimeError("Unable to locate KernelBench-v3 repository root inside Modal task")
+
+
+REPO_ROOT = _detect_repo_root()
 SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -99,6 +146,7 @@ image = (
         add_python=MODAL_CONFIG.image.python_version,
     )
     .apt_install("build-essential", "rsync", "curl")
+    .pip_install("PyYAML==6.0.3")
     .run_commands(*_ensure_uv_installed_commands())
     .add_local_dir(str(REPO_ROOT), remote_path="/workspace_src")
 )

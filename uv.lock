@@ -950,7 +950,6 @@ dependencies = [
     { name = "torch" },
     { name = "tqdm" },
     { name = "transformers" },
-    { name = "triton" },
 ]
 
 [package.metadata]
@@ -987,7 +986,6 @@ requires-dist = [
     { name = "torch", specifier = "==2.5.0" },
     { name = "tqdm" },
     { name = "transformers" },
-    { name = "triton", specifier = "==3.1.0" },
 ]
 
 [package.metadata.requires-dev]

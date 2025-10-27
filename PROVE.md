@@ -1,5 +1,88 @@
 # 2025-10-22 Ensure Provider Preflight
+# 2025-10-27 Fix Modal repo detection
 
+## rationale
+Ensure Modal jobs import KernelBench packages by resolving the repository root when the code runs inside Modal containers.
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+-def _detect_repo_root() -> Path:
+-    """Return the repository root for both local and Modal executions."""
+-    candidates: list[Path] = []
+-
+-    env_repo = os.environ.get("KB3_MODAL_REPO_ROOT")
+-    if env_repo:
+-        candidates.append(Path(env_repo).resolve())
+-
+-    script_parent = Path(__file__).resolve().parent
+-    candidates.append(script_parent.parent)
+-
+-    # Modal mounts the repository at /workspace_src by default.
+-    candidates.append(Path("/workspace_src"))
+-
+-    for candidate in candidates:
+-        src_dir = candidate / "src"
+-        if src_dir.exists():
+-            return candidate.resolve()
+-    return script_parent.parent
++def _detect_repo_root() -> Path:
++    """Return the repository root for both local and Modal executions."""
++
++    def _is_repo_root(path: Path) -> bool:
++        return (path / _SRC_MARKER).exists()
++
++    script_path = Path(__file__).resolve()
++    script_parent = script_path.parent
++
++    raw_candidates: list[Path] = []
++
++    env_repo = os.environ.get("KB3_MODAL_REPO_ROOT")
++    if env_repo:
++        raw_candidates.append(Path(env_repo))
++
++    # Common Modal mount points.
++    raw_candidates.append(Path("/workspace_src"))
++    raw_candidates.append(Path("/root") / REPO_NAME)
++
++    # Fallbacks based on the script location.
++    raw_candidates.extend([script_parent, script_parent.parent, script_parent / REPO_NAME])
++
++    # De-duplicate while preserving order.
++    candidates: list[Path] = []
++    seen: set[str] = set()
++    for candidate in raw_candidates:
++        key = str(candidate)
++        if key in seen:
++            continue
++        seen.add(key)
++        candidates.append(candidate)
++
++    for candidate in candidates:
++        try:
++            resolved = candidate.resolve(strict=False)
++        except RuntimeError:  # pragma: no cover - defensive for unusual filesystems
++            resolved = candidate
++        if _is_repo_root(resolved):
++            return resolved
++
++    raise RuntimeError("Unable to locate KernelBench-v3 repository root inside Modal task")
+@@
+ image = (
+     modal.Image.from_registry(
+         f"nvidia/cuda:{MODAL_CONFIG.image.registry_tag}",
+         add_python=MODAL_CONFIG.image.python_version,
+     )
+     .apt_install("build-essential", "rsync", "curl")
++    .pip_install("PyYAML==6.0.3")
+     .run_commands(*_ensure_uv_installed_commands())
+     .add_local_dir(str(REPO_ROOT), remote_path="/workspace_src")
+ )
+```
+
+## validate
+- `bash setup_and_run.sh configs/modal_raw.yaml`
 ## rationale
 Prevent expensive benchmarks from starting with missing or misconfigured API credentials, and harden provider adapters (especially Gemini) so preflight probes succeed while surfacing actionable failures.
 
@@ -34234,4 +34317,128 @@ new file mode 100644
 ## validate
 - `bash setup_and_run.sh configs/modal_raw.yaml`
 - `uv run python -m compileall tools/modal_raw.py src/modal_support/__init__.py`
+
+# 2025-10-27 Provider credential preflight
+
+## rationale
+Abort Modal launches early when provider API keys are missing rather than failing mid-run after provisioning remote GPUs.
+
+## patch
+```diff
+diff --git a/src/providers/__init__.py b/src/providers/__init__.py
+@@
+ _PROVIDER_API_KEY_ALIASES: Dict[str, Iterable[str]] = {
+     "openai": ("OPENAI_API_KEY",),
+@@
+-def resolve_provider_api_key(provider: str) -> str | None:
+-    """Resolve provider API keys from common environment variable names."""
+-    provider_slug = provider.lower()
+-    candidates = list(_PROVIDER_API_KEY_ALIASES.get(provider_slug, ()))
+-
+-    for env_name in candidates:
++def provider_api_key_env_candidates(provider: str) -> tuple[str, ...]:
++    """Return preferred environment variable names for a provider API key."""
++    provider_slug = provider.lower()
++    aliases = list(_PROVIDER_API_KEY_ALIASES.get(provider_slug, ()))
++    scoped_key = f"KB3_LLM_API_KEY_{provider_slug.upper()}"
++    candidates = [*aliases, scoped_key, "KB3_LLM_API_KEY"]
++
++    ordered: list[str] = []
++    seen: set[str] = set()
++    for candidate in candidates:
++        if candidate and candidate not in seen:
++            ordered.append(candidate)
++            seen.add(candidate)
++    return tuple(ordered)
++
++
++def resolve_provider_api_key(provider: str) -> str | None:
++    """Resolve provider API keys from common environment variable names."""
++    for env_name in provider_api_key_env_candidates(provider):
+         value = os.getenv(env_name)
+         if value:
+             return value
+     return None
+diff --git a/setup_and_run.sh b/setup_and_run.sh
+@@
+ echo "[setup] Synchronizing project dependencies with uv..."
+ with_timeout "${UV_TIMEOUT}" uv sync
+ 
+ echo "[setup] Validating provider API credentials for ${CONFIG_REL}..."
+ if ! with_timeout "${UV_TIMEOUT}" uv run python - <<'PY' "${CONFIG_REL}" "${REPO_ROOT}"; then
+ import sys
+ from pathlib import Path
+ 
+ import yaml
+ 
+ 
+ CONFIG_REL = Path(sys.argv[1])
+ REPO_ROOT = Path(sys.argv[2])
+ CONFIG_PATH = (REPO_ROOT / CONFIG_REL).resolve()
+ 
+ SRC_DIR = REPO_ROOT / "src"
+ if str(SRC_DIR) not in sys.path:
+     sys.path.insert(0, str(SRC_DIR))
+ 
+ from providers import (
+     provider_api_key_env_candidates,
+     resolve_provider_api_key,
+ )
+ 
+ 
+ def _collect_providers(node, accumulator):
+     if isinstance(node, dict):
+         for key, value in node.items():
+             if key.endswith("provider"):
+                 _record_provider(value, accumulator)
+             elif key == "providers":
+                 _record_provider(value, accumulator)
+             _collect_providers(value, accumulator)
+     elif isinstance(node, list):
+         for item in node:
+             _collect_providers(item, accumulator)
+ 
+ 
+ def _record_provider(value, accumulator):
+     if isinstance(value, str):
+         normalized = value.strip().lower()
+         if normalized:
+             accumulator.add(normalized)
+     elif isinstance(value, (list, tuple, set)):
+         for item in value:
+             _record_provider(item, accumulator)
+ 
+ 
+ with CONFIG_PATH.open("r", encoding="utf-8") as handle:
+     config_payload = yaml.safe_load(handle) or {}
+ 
+ providers = set()
+ _collect_providers(config_payload, providers)
+ 
+ missing = []
+ for provider in sorted(providers):
+     if resolve_provider_api_key(provider) is None:
+         missing.append((provider, provider_api_key_env_candidates(provider)))
+ 
+ if missing:
+     print("[setup] Missing provider API keys:")
+     for provider, candidates in missing:
+         choices = ", ".join(candidates) if candidates else "KB3_LLM_API_KEY"
+         print(f"  - {provider}: set one of [{choices}]")
+     raise SystemExit(1)
+ 
+ if providers:
+     print("[setup] Provider API keys detected for:", ", ".join(sorted(providers)))
+ else:
+     print("[setup] No provider API keys required by configuration.")
+ PY
+   echo "[setup] Provider API credential check failed." >&2
+   exit 1
+ fi
+ 
+ echo "[setup] Provider API credentials verified."
+```
+
+## validate
+- `bash setup_and_run.sh configs/modal_raw.yaml` (fails fast without GROQ_API_KEY, succeeds once exported)
 
