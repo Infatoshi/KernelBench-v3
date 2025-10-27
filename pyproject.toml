@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kernelbench-v3"
+version = "0.1.0"
+description = "Unified benchmark for evaluating LLM-generated GPU kernels"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "KernelBench Contributors" }]
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "PyYAML",
+    "anthropic>=0.39.0",
+    "archon-ai",
+    "cerebras-cloud-sdk>=1.0.0",
+    "datasets==3.6.0",
+    "einops",
+    "google-generativeai>=0.8.3",
+    "groq",
+    "hjson",
+    "huggingface-hub",
+    "loguru",
+    "matplotlib",
+    "modal",
+    "multiprocess",
+    "ninja",
+    "numpy==1.26",
+    "openai==1.75.0",
+    "packaging",
+    "pandas",
+    "parse_llm_code",
+    "protobuf==5.29.4",
+    "pydra_config",
+    "pytest",
+    "rank-bm25",
+    "regex",
+    "requests",
+    "setuptools",
+    "tenacity",
+    "together",
+    "torch==2.5.0",
+    "tqdm",
+    "transformers",
+    "triton==3.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/**",
+    "configs/**",
+    "data/**",
+    "docs/**",
+    "README.md",
+    "LICENSE",
+    "config.py",
+    "eval.py",
+    "setup.py",
+    "setup_and_test.sh",
+]
+
+[dependency-groups]
+default = []
+
+[tool.uv]
+default-groups = ["default"]

@@ -1,8 +1,7 @@
-description: Unified benchmark config covering Google, Anthropic, OpenAI, and OpenRouter models.
+description: Raw-only evaluation across all providers/models with both CUDA and Triton kernels.
 
 modes:
   - raw
-  - agentic
 
 languages:
   - cuda
@@ -59,7 +58,11 @@ agentic:
 
 artifacts:
   json_dir: json
-  plots_dir: plots
+  plots_dir: plots/raw
 
 visualization:
   enabled: true
+  metrics:
+    - compilation_rate
+    - correctness_rate
+    - fast_1_rate

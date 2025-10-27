@@ -1,0 +1,15 @@
+False*#*#None*#*#None*#*#Could not execute module context_attn_nopad.py_gen_triton_code_41343 due to at 82:12:
+        # compute softmax on this block
+        m_ij = tl.max(s, axis=1)
+        m_i_new = tl.maximum(m_i, m_ij)
+        p = tl.exp(s - m_i_new[:, None])
+        alpha = tl.exp(m_i - m_i_new)
+
+        # update acc and stats
+        acc = acc * alpha[:, None]
+
+        # load V block
+        v_ptr = (
+            V +
+            ^
+ValueError('Cannot make_shape_compatible: incompatible dimensions at index 1: 32 and 128')

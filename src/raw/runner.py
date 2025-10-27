@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import datetime
 import multiprocessing
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from time import perf_counter
 from typing import Any, Dict, Iterable, TYPE_CHECKING
+
+import yaml
+from tqdm.auto import tqdm
 
 from prompt_constructor import (
     prompt_generate_custom_cuda_from_prompt_template,
@@ -33,13 +38,38 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 _CPU_STATE: Dict[str, Any] = {}
 
 
-def _render_progress_bar(completed: int, total: int, width: int = 28) -> str:
-    if total <= 0:
-        return "[ ]"
-    completed = max(0, min(completed, total))
-    filled = int(width * completed / total)
-    bar = "#" * filled + "-" * (width - filled)
-    return f"[{bar}]"
+DEFAULT_FORMATTER_PROVIDER = "groq"
+DEFAULT_FORMATTER_MODEL = "moonshotai/kimi-k2-instruct-0905"
+
+
+def _write_text(path: Path, content: str | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "" if content is None else str(content)
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_yaml(path: Path, data: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True)
+
+
+def _problem_directory_name(problem_id: int, problem_name: str | None) -> str:
+    base = problem_name or f"problem_{problem_id}"
+    return f"kernel_{problem_id}_{sanitize_component(base)}"
+
+
+def _print_error(message: str) -> None:
+    banner = "=" * 60
+    print(f"\n{banner}\n!!! ERROR DETECTED !!!\n{message}\n{banner}\n")
+
+
+def _print_message_block(title: str, content: str | list) -> None:
+    print(f"{title} (suppressed)")
+
+
+def _print_formatted_preview(title: str, file_path: Path, directory: Path) -> None:
+    return
 
 
 def _update_progress(progress_state: Dict[str, Any]) -> None:
@@ -47,18 +77,18 @@ def _update_progress(progress_state: Dict[str, Any]) -> None:
         return
 
     lock: threading.Lock = progress_state["lock"]
+    bar: tqdm = progress_state["bar"]
     with lock:
-        progress_state["completed"] += 1
-        completed = progress_state["completed"]
-        total = progress_state["total"]
-        label = progress_state["label"]
-        prefix = progress_state["prefix"]
-        bar = _render_progress_bar(completed, total)
-        sys.stdout.write(f"\r{prefix} {bar} {completed}/{total}")
-        sys.stdout.flush()
-        if completed >= total:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+        bar.update(1)
+
+
+def _close_bar(bar: tqdm | None) -> None:
+    if bar is None:
+        return
+    try:
+        bar.close()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def sanitize_component(value: str) -> str:
@@ -131,6 +161,9 @@ def build_inference_callable(config: "BenchmarkConfig"):
     generation_limit = getattr(config, "generation_max_tokens", 4096)
     if generation_limit is not None and generation_limit <= 0:
         generation_limit = None
+    verbose = bool(getattr(config, "verbose", False))
+    max_retries = 3
+    backoff_seconds = 10
 
     def _inference(prompt: str | list[dict]):
         messages = []
@@ -138,64 +171,98 @@ def build_inference_callable(config: "BenchmarkConfig"):
             messages.append({"role": "user", "content": prompt})
         else:
             messages = prompt
-        print("\n=== RAW LLM REQUEST ===")
-        payload = {
-            "provider": provider.config.provider,
-            "model": provider.config.model,
-            "messages": messages,
-            "max_tokens": generation_limit,
-        }
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        response = provider.generate(messages, max_tokens=generation_limit)
-        print("=== RAW LLM RESPONSE ===")
-        if isinstance(response, str):
-            print(response)
-        else:
+        attempt = 0
+        while True:
+            if verbose:
+                print(
+                    f"[Raw] REQUEST -> {provider.config.provider}/{provider.config.model} "
+                    f"(max_tokens={generation_limit})"
+                )
             try:
-                print(json.dumps(response, indent=2, ensure_ascii=False))
-            except TypeError:
-                print(str(response))
-        return response
+                response = provider.generate(messages, max_tokens=generation_limit)
+                if verbose:
+                    print(
+                        f"[Raw] RESPONSE <- {provider.config.provider}/{provider.config.model} "
+                        "(content suppressed)"
+                    )
+                return response
+            except Exception as exc:  # noqa: BLE001
+                attempt += 1
+                message = str(exc).lower()
+                is_rate_limited = "rate limit" in message or "429" in message
+                if not is_rate_limited or attempt >= max_retries:
+                    raise
+                sleep_for = backoff_seconds
+                if verbose:
+                    print(
+                        f"[Raw] Rate limit hit for {provider.config.model}; retrying in {sleep_for}s "
+                        f"(attempt {attempt}/{max_retries})."
+                    )
+                time.sleep(sleep_for)
 
     return _inference
 
 
 def build_formatter_callable(config: "BenchmarkConfig"):
+    if not getattr(config, "formatter_provider", None):
+        config.formatter_provider = DEFAULT_FORMATTER_PROVIDER
+    if not getattr(config, "formatter_model", None):
+        config.formatter_model = DEFAULT_FORMATTER_MODEL
+
     formatter_provider = build_formatter_provider(config)
     if formatter_provider is None:
         return None
     formatter_limit = getattr(config, "formatter_max_tokens", None)
     if formatter_limit is not None and formatter_limit <= 0:
         formatter_limit = None
+    verbose = bool(getattr(config, "verbose", False))
+    max_retries = 3
+    backoff_seconds = 10
 
     def _formatter(prompt: str | list[dict]):
         if isinstance(prompt, str):
             messages = [{"role": "user", "content": prompt}]
         else:
             messages = prompt
-        print("\n=== FORMATTER LLM REQUEST ===")
-        payload = {
-            "provider": formatter_provider.config.provider,
-            "model": formatter_provider.config.model,
-            "messages": messages,
-            "max_tokens": formatter_limit,
-        }
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        response = formatter_provider.generate(messages, max_tokens=formatter_limit)
-        print("=== FORMATTER LLM RESPONSE ===")
-        if isinstance(response, str):
-            print(response)
-        else:
+        attempt = 0
+        while True:
+            if verbose:
+                print(
+                    f"[Formatter] REQUEST -> {formatter_provider.config.provider}/"
+                    f"{formatter_provider.config.model} (max_tokens={formatter_limit})"
+                )
             try:
-                print(json.dumps(response, indent=2, ensure_ascii=False))
-            except TypeError:
-                print(str(response))
-        return response
+                response = formatter_provider.generate(messages, max_tokens=formatter_limit)
+                if verbose:
+                    print(
+                        f"[Formatter] RESPONSE <- {formatter_provider.config.provider}/"
+                        f"{formatter_provider.config.model} (content suppressed)"
+                    )
+                return response
+            except Exception as exc:  # noqa: BLE001
+                attempt += 1
+                message = str(exc).lower()
+                is_rate_limited = "rate limit" in message or "429" in message
+                if not is_rate_limited or attempt >= max_retries:
+                    raise
+                sleep_for = backoff_seconds
+                if verbose:
+                    print(
+                        f"[Formatter] Rate limit hit for {formatter_provider.config.model}; "
+                        f"retrying in {sleep_for}s (attempt {attempt}/{max_retries})."
+                    )
+                time.sleep(sleep_for)
 
     return _formatter
 
 
-def _cpu_initializer(config: "BenchmarkConfig", generation_level: int, job_queue, result_store, build_root: Path):
+def _cpu_initializer(
+    config: "BenchmarkConfig",
+    generation_level: int,
+    job_queue,
+    result_store,
+    build_root: Path,
+):
     """Set up CPU worker state for prompt generation."""
     global _CPU_STATE
     _CPU_STATE = {
@@ -308,6 +375,7 @@ def _cpu_prepare_problem(problem_id: int) -> Dict[str, Any]:
             "raw_completion": None,
             "formatted_completion": None,
         }
+        _print_error(f"[Raw] CPU preparation failed for problem {problem_id}: {exc}")
         if cpu_profile is not None:
             cpu_profile["cpu_total_s"] = perf_counter() - cpu_start
             cpu_total = cpu_profile.get("cpu_total_s", 0.0)
@@ -345,6 +413,7 @@ def _run_gpu_evaluation(candidate: Dict[str, Any], config: "BenchmarkConfig", pr
         "compiled": bool(result and result.compiled),
         "correctness": bool(result and result.correctness),
         "runtime": getattr(result, "runtime", None),
+        "runtime_stats": getattr(result, "runtime_stats", None),
         "metadata": metadata,
         "generated_code": candidate["generated_code"],
     }
@@ -463,6 +532,7 @@ def _gpu_process_entry(
             set_gpu_arch([config.hardware.gpu_architecture])
         result = _evaluate_candidate(candidate, config, build_root_path)
     except Exception as exc:  # noqa: BLE001
+        _print_error(f"[Raw] GPU evaluation failed for problem {problem_id}: {exc}")
         result = {
             "level": candidate.get("level"),
             "problem_id": problem_id,
@@ -470,18 +540,24 @@ def _gpu_process_entry(
             "compiled": False,
             "correctness": False,
             "runtime": None,
+            "runtime_stats": None,
             "metadata": {
                 "error": str(exc),
                 "exception_type": type(exc).__name__,
                 "stage": "evaluation",
             },
             "generated_code": candidate.get("generated_code"),
+            "prompt": candidate.get("prompt"),
+            "raw_completion": candidate.get("raw_completion"),
+            "formatted_completion": candidate.get("formatted_completion"),
+            "ref_arch_src": candidate.get("ref_arch_src"),
         }
 
     return problem_id, result
 
 
-def run(config: "BenchmarkConfig") -> None:
+def run(config: "BenchmarkConfig") -> Dict[str, Any]:
+    run_start = perf_counter()
     if config.language not in {"triton", "cuda"}:
         print(f"[Raw] Warning: '{config.language}' kernels are not fully supported; falling back to CUDA evaluation workflow.")
 
@@ -511,9 +587,10 @@ def run(config: "BenchmarkConfig") -> None:
     provider_safe = sanitize_component(config.provider)
     model_safe = sanitize_component(config.generator_model.replace("/", "_"))
     language_safe = sanitize_component(config.language or "cuda")
-    run_dir = RUNS_DIR / f"{config.mode}_{language_safe}_{provider_safe}_{model_safe}"
+    timestamp = datetime.utcnow()
+    run_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{config.mode}_{language_safe}_{provider_safe}_{model_safe}"
+    run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    results_path = run_dir / "results.jsonl"
     build_root = run_dir / "build_cache"
     build_root.mkdir(parents=True, exist_ok=True)
     worker_count = max(1, config.raw_concurrency or 1)
@@ -521,130 +598,176 @@ def run(config: "BenchmarkConfig") -> None:
 
     mode = "parallel" if use_parallel else "sequential"
     print(
-        f"[Raw] Evaluating {len(problems)} problem(s) in {mode} mode "
-        f"using {worker_count if use_parallel else 1} CPU worker(s) with queued GPU execution."
+        f"[Raw] Preparing {len(problems)} problem(s) in {mode} mode with "
+        f"{worker_count if use_parallel else 1} CPU worker(s) and queued GPU execution."
     )
 
-    ctx = multiprocessing.get_context("spawn")
-    manager = ctx.Manager()
-    job_queue = ctx.Queue(maxsize=worker_count * 2 if use_parallel else 1)
-    shared_results: Dict[int, Dict[str, Any]] = manager.dict()
-
-    progress_state: Dict[str, Any] = {
+    cpu_bar = tqdm(
+        total=len(problems),
+        desc="Generation",
+        unit="kernel",
+        leave=True,
+        dynamic_ncols=True,
+    )
+    cpu_progress_state: Dict[str, Any] = {
         "lock": threading.Lock(),
-        "completed": 0,
-        "total": len(problems),
-        "label": f"{config.provider}/{config.generator_model}",
-        "prefix": f"[{config.mode.upper()}|{config.language.upper()}]",
+        "bar": cpu_bar,
     }
 
     gpu_worker_count = max(1, config.raw_gpu_concurrency or 1)
-
-    process_executor_kwargs = {
-        "max_workers": gpu_worker_count,
-        "mp_context": ctx,
-    }
-    try:
-        gpu_executor = ProcessPoolExecutor(max_tasks_per_child=1, **process_executor_kwargs)
-    except TypeError:
-        gpu_executor = ProcessPoolExecutor(**process_executor_kwargs)
-
-    pending_futures_lock = threading.Lock()
-    pending_futures: set = set()
-    dispatch_done = threading.Event()
-
-    def _handle_gpu_future(future):
-        try:
-            problem_id, result = future.result()
-        except Exception as exc:  # noqa: BLE001
-            print(f"[Raw] GPU worker raised unexpected error: {exc}")
-            return
-
-        if problem_id is None:
-            return
-
-        shared_results[problem_id] = result
-        _update_progress(progress_state)
-        with pending_futures_lock:
-            pending_futures.discard(future)
-
-    def _gpu_dispatch_loop() -> None:
-        sentinel_seen = 0
-        while True:
-            candidate = job_queue.get()
-            if candidate is None:
-                sentinel_seen += 1
-                if sentinel_seen >= gpu_worker_count:
-                    break
-                continue
-
-            future = gpu_executor.submit(
-                _gpu_process_entry,
-                candidate,
-                config,
-                str(build_root),
-            )
-            with pending_futures_lock:
-                pending_futures.add(future)
-            future.add_done_callback(_handle_gpu_future)
-
-        dispatch_done.set()
-
-    dispatch_thread = threading.Thread(
-        target=_gpu_dispatch_loop,
-        name="raw-gpu-dispatch",
-        daemon=True,
+    gpu_bar = tqdm(
+        total=len(problems),
+        desc="Evaluation",
+        unit="kernel",
+        leave=True,
+        dynamic_ncols=True,
     )
-    dispatch_thread.start()
+    gpu_progress_state: Dict[str, Any] = {
+        "lock": threading.Lock(),
+        "bar": gpu_bar,
+    }
 
-    if use_parallel:
-        with ProcessPoolExecutor(
-            max_workers=worker_count,
-            mp_context=ctx,
-            initializer=_cpu_initializer,
-            initargs=(config, gen_cfg.level, job_queue, shared_results, build_root),
-        ) as executor:
-            future_map = {executor.submit(_cpu_prepare_problem, pid): pid for pid in problems}
+    print(
+        f"[Raw] CPU workers: {worker_count} | GPU workers: {gpu_worker_count}"
+    )
 
-            for future in as_completed(future_map):
-                pid = future_map[future]
-                try:
-                    result = future.result()
-                except Exception as exc:  # noqa: BLE001
-                    shared_results[pid] = {
-                        "level": gen_cfg.level,
-                        "problem_id": pid,
-                        "problem_name": None,
-                        "compiled": False,
-                        "correctness": False,
-                        "runtime": None,
-                        "metadata": {
-                            "error": str(exc),
-                            "exception_type": type(exc).__name__,
-                            "stage": "generation",
-                        },
-                        "generated_code": None,
-                    }
-                    _update_progress(progress_state)
-                    print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
-                else:
-                    print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
-                    if result and not result.get("queued", True):
-                        _update_progress(progress_state)
-    else:
-        _cpu_initializer(config, gen_cfg.level, job_queue, shared_results, build_root)
-        for pid in problems:
-            print(f"[Raw] Preparing level {gen_cfg.level} problem {pid}")
-            result_info = _cpu_prepare_problem(pid)
+    manager = None
+
+    try:
+        ctx = multiprocessing.get_context("spawn")
+        manager = ctx.Manager()
+        job_queue = ctx.Queue(maxsize=worker_count * 2 if use_parallel else 1)
+        shared_results: Dict[int, Dict[str, Any]] = manager.dict()
+
+        gpu_executor = None
+        dispatch_thread = None
+        dispatch_done = threading.Event()
+        pending_futures_lock = threading.Lock()
+        pending_futures: set = set()
+
+        try:
+            gpu_executor = ProcessPoolExecutor(max_tasks_per_child=1, **{
+                "max_workers": gpu_worker_count,
+                "mp_context": ctx,
+            })
+        except TypeError:
+            gpu_executor = ProcessPoolExecutor(
+                max_workers=gpu_worker_count,
+                mp_context=ctx,
+            )
+
+        def _handle_gpu_future(future):
+            try:
+                problem_id, result = future.result()
+            except Exception as exc:  # noqa: BLE001
+                _print_error(f"[Raw] GPU worker raised unexpected error: {exc}")
+                return
+
+            if problem_id is None:
+                return
+
+            shared_results[problem_id] = result
+            _update_progress(gpu_progress_state)
+            with pending_futures_lock:
+                pending_futures.discard(future)
+
+        def _gpu_dispatch_loop() -> None:
+            sentinel_seen = 0
+            while True:
+                candidate = job_queue.get()
+                if candidate is None:
+                    sentinel_seen += 1
+                    if sentinel_seen >= gpu_worker_count:
+                        break
+                    continue
+
+                future = gpu_executor.submit(
+                    _gpu_process_entry,
+                    candidate,
+                    config,
+                    str(build_root),
+                )
+                with pending_futures_lock:
+                    pending_futures.add(future)
+                future.add_done_callback(_handle_gpu_future)
+
+            dispatch_done.set()
+
+        dispatch_thread = threading.Thread(
+            target=_gpu_dispatch_loop,
+            name="raw-gpu-dispatch",
+            daemon=True,
+        )
+        dispatch_thread.start()
+
+        if use_parallel:
+            with ProcessPoolExecutor(
+                max_workers=worker_count,
+                mp_context=ctx,
+                initializer=_cpu_initializer,
+                initargs=(
+                    config,
+                    gen_cfg.level,
+                    job_queue,
+                    shared_results,
+                    build_root,
+                ),
+            ) as executor:
+                future_map = {executor.submit(_cpu_prepare_problem, pid): pid for pid in problems}
+
+                for future in as_completed(future_map):
+                    pid = future_map[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        shared_results[pid] = {
+                            "level": gen_cfg.level,
+                            "problem_id": pid,
+                            "problem_name": None,
+                            "compiled": False,
+                            "correctness": False,
+                            "runtime": None,
+                            "metadata": {
+                                "error": str(exc),
+                                "exception_type": type(exc).__name__,
+                                "stage": "generation",
+                            },
+                            "generated_code": None,
+                        }
+                        _update_progress(cpu_progress_state)
+                        _update_progress(gpu_progress_state)
+                        _print_error(f"[Raw] CPU future failed for problem {pid}: {exc}")
+                        continue
+
+                    _update_progress(cpu_progress_state)
+                    queued = bool(result.get("queued", True))
+                    if not queued:
+                        _update_progress(gpu_progress_state)
+        else:
+            _cpu_initializer(
+                config,
+                gen_cfg.level,
+                job_queue,
+                shared_results,
+                build_root,
+            )
+            for pid in problems:
+                result_info = _cpu_prepare_problem(pid)
+                _update_progress(cpu_progress_state)
                 if result_info and not result_info.get("queued", True):
-                    _update_progress(progress_state)
+                    _update_progress(gpu_progress_state)
 
-    for _ in range(gpu_worker_count):
-        job_queue.put(None)
+        for _ in range(gpu_worker_count):
+            job_queue.put(None)
 
-    dispatch_thread.join()
-    dispatch_done.wait()
-    gpu_executor.shutdown(wait=True)
+        if dispatch_thread is not None:
+            dispatch_thread.join()
+        dispatch_done.wait()
+        gpu_executor.shutdown(wait=True)
+
+    finally:
+        _close_bar(cpu_bar)
+        _close_bar(gpu_bar)
 
     results = {pid: shared_results.get(pid) for pid in problems}
 
@@ -665,11 +788,6 @@ def run(config: "BenchmarkConfig") -> None:
                 "generated_code": None,
             }
 
-    with results_path.open("w", encoding="utf-8") as f:
-        for pid in problems:
-            f.write(json.dumps(results[pid]) + "\n")
-            f.flush()
-
     total = len(problems)
     compiled_count = sum(
         1 for record in results.values() if record and record.get("compiled")
@@ -679,6 +797,109 @@ def run(config: "BenchmarkConfig") -> None:
     )
     failure_breakdown: Counter[str] = Counter()
     stage_breakdown: Counter[str] = Counter()
+
+    kernel_summaries: list[Dict[str, Any]] = []
+    environment: Dict[str, Any] | None = None
+
+    for pid in problems:
+        record = results.get(pid) or {}
+        metadata = record.get("metadata") or {}
+        if environment is None and metadata:
+            env_fields: Dict[str, Any] = {}
+            if metadata.get("hardware"):
+                env_fields["hardware"] = metadata.get("hardware")
+            if metadata.get("device"):
+                env_fields["device"] = metadata.get("device")
+            if env_fields:
+                environment = env_fields
+
+        compiled = bool(record.get("compiled"))
+        correctness = bool(record.get("correctness"))
+        runtime_stats = record.get("runtime_stats") or {}
+
+        if not compiled:
+            reason = str(
+                metadata.get("error_category")
+                or metadata.get("compilation_error")
+                or metadata.get("error")
+                or "compilation_failed"
+            )
+            failure_breakdown[reason] += 1
+            stage_breakdown["compilation"] += 1
+        elif not correctness:
+            reason = str(
+                metadata.get("error_category")
+                or metadata.get("correctness_issue")
+                or metadata.get("runtime_error")
+                or metadata.get("error")
+                or "correctness_failed"
+            )
+            failure_breakdown[reason] += 1
+            stage = str(metadata.get("stage") or "correctness")
+            stage_breakdown[stage] += 1
+
+        problem_name = record.get("problem_name")
+        problem_dir = run_dir / _problem_directory_name(pid, problem_name)
+        problem_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_lines = []
+        summary_lines.append(f"compilation: {'pass' if compiled else 'fail'}")
+        if not compiled:
+            summary_lines.append(
+                "  reason: "
+                + str(
+                    metadata.get("compilation_error")
+                    or metadata.get("error_category")
+                    or metadata.get("error")
+                    or "unknown"
+                )
+            )
+        summary_lines.append(f"correctness: {'pass' if correctness else 'fail'}")
+        if correctness and runtime_stats:
+            summary_lines.append("performance: available")
+        else:
+            summary_lines.append("performance: n/a")
+        if metadata.get("stage"):
+            summary_lines.append(f"stage: {metadata.get('stage')}")
+        if record.get("runtime") not in (None, -1.0):
+            summary_lines.append(f"runtime_mean_ms: {record.get('runtime')}")
+
+        _write_text(problem_dir / "summary.txt", "\n".join(summary_lines) + "\n")
+        _write_text(problem_dir / "prompt.txt", record.get("prompt"))
+        _write_text(problem_dir / "response_raw.txt", record.get("raw_completion"))
+        if record.get("formatted_completion"):
+            _write_text(problem_dir / "response_formatted.txt", record.get("formatted_completion"))
+        _write_text(problem_dir / "reference.py", record.get("ref_arch_src"))
+        _write_text(problem_dir / "generated_code.py", record.get("generated_code"))
+        _print_formatted_preview(
+            f"[Raw] Formatted output for {problem_dir.name}",
+            problem_dir / "generated_code.py",
+            problem_dir,
+        )
+
+        metrics_data = {
+            "compiled": compiled,
+            "correctness": correctness,
+            "runtime_ms": record.get("runtime"),
+            "runtime_stats": runtime_stats or None,
+            "profiling": record.get("profiling"),
+            "metadata": metadata,
+        }
+        _write_yaml(problem_dir / "metrics.yaml", metrics_data)
+
+        kernel_summaries.append(
+            {
+                "problem_id": pid,
+                "problem_name": problem_name,
+                "path": problem_dir.relative_to(run_dir).as_posix(),
+                "compiled": compiled,
+                "correctness": correctness,
+                "runtime_ms": record.get("runtime"),
+                "runtime_stats": runtime_stats or None,
+                "stage": metadata.get("stage"),
+                "error_category": metadata.get("error_category"),
+            }
+        )
 
     for record in results.values():
         if not record:
@@ -705,24 +926,65 @@ def run(config: "BenchmarkConfig") -> None:
             failure_breakdown[reason] += 1
             stage_breakdown[stage] += 1
 
-    print(f"[Raw] Compiled: {compiled_count}/{total} | Correct: {correct_count}/{total}")
-    if failure_breakdown:
-        print("[Raw] Failure breakdown:")
-        for reason, count in failure_breakdown.most_common():
-            label = reason.replace("_", " ")
-            print(f"  - {label}: {count}")
-        if stage_breakdown:
-            print("[Raw] Failure stages:")
-            for stage, count in stage_breakdown.most_common():
-                label = stage.replace("_", " ")
+    verbose = bool(getattr(config, "verbose", False))
+    if verbose:
+        print(f"[Raw] Compiled: {compiled_count}/{total} | Correct: {correct_count}/{total}")
+        if failure_breakdown:
+            print("[Raw] Failure breakdown:")
+            for reason, count in failure_breakdown.most_common():
+                label = reason.replace("_", " ")
                 print(f"  - {label}: {count}")
+            if stage_breakdown:
+                print("[Raw] Failure stages:")
+                for stage, count in stage_breakdown.most_common():
+                    label = stage.replace("_", " ")
+                    print(f"  - {label}: {count}")
 
-    print(f"[Raw] Completed run for {len(problems)} problems. Results saved to {results_path}")
+    metrics_bundle = {
+        "total": total,
+        "compiled_count": compiled_count,
+        "correct_count": correct_count,
+        "compilation_rate": round((compiled_count / total) * 100, 3) if total else 0.0,
+        "correctness_rate": round((correct_count / compiled_count) * 100, 3) if compiled_count else 0.0,
+    }
 
-    manager.shutdown()
+    elapsed_seconds = round(perf_counter() - run_start, 1)
+
+    manifest = {
+        "run_id": run_id,
+        "timestamp": timestamp.replace(microsecond=0).isoformat() + "Z",
+        "mode": config.mode,
+        "language": config.language,
+        "provider": config.provider,
+        "model": config.generator_model,
+        "elapsed_seconds": elapsed_seconds,
+        "settings": {
+            "num_runs": config.num_runs,
+            "generation_max_tokens": getattr(config, "generation_max_tokens", None),
+            "formatter": {
+                "provider": getattr(config, "formatter_provider", None),
+                "model": getattr(config, "formatter_model", None),
+            },
+            "raw_concurrency": config.raw_concurrency,
+            "raw_gpu_concurrency": config.raw_gpu_concurrency,
+            "raw_max_jobs": config.raw_max_jobs,
+        },
+        "environment": environment,
+        "kernels": kernel_summaries,
+    }
+
+    manifest_path = run_dir / "manifest.yaml"
+    _write_yaml(manifest_path, manifest)
+
+    if verbose:
+        print(f"[Raw] Completed run for {len(problems)} problems in {elapsed_seconds:.1f}s. Results saved to {manifest_path}")
+
+    if manager is not None:
+        manager.shutdown()
 
     return {
-        "results_path": str(results_path),
         "run_dir": str(run_dir),
-        "evaluated_problems": len(problems),
+        "manifest": str(manifest_path),
+        "metrics": metrics_bundle,
+        "elapsed_seconds": elapsed_seconds,
     }

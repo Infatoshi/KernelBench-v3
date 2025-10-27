@@ -254,7 +254,7 @@ new file mode 100644
 ```
 
 ## validate
-- `uv run python eval.py --config configs/openai_groq.yaml --num-runs 1` (Gemini and Groq both preflight, runs hit cache, confirming env alias resolution and Gemini fallback logic).
+- `uv run python eval.py --config configs/openai_groq.yaml ` (Gemini and Groq both preflight, runs hit cache, confirming env alias resolution and Gemini fallback logic).
 
 # 2025-10-23 Isolate Raw GPU Evaluations
 
@@ -568,7 +568,7 @@ diff --git a/src/raw/runner.py b/src/raw/runner.py
 ```
 
 ## validate
-- `uv run python eval.py --config configs/openai_groq.yaml --num-runs 4 --profile-stages --verbose`
+- `uv run python eval.py --config configs/openai_groq.yaml  --profile-stages --verbose`
 
 # 2025-10-23 Fused Provider Config
 
@@ -669,7 +669,7 @@ new file mode 100644
 ```
 
 ## validate
-- `source ~/.bashrc && export GEMINI_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY GROQ_API_KEY CEREBRAS_API_KEY XAI_API_KEY && uv run eval.py --config configs/all_providers.yaml --num-runs 1` *(fails fast when API keys aren’t exported; ready to re-run once credentials are in the shell env)*
+- `source ~/.bashrc && export GEMINI_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY GROQ_API_KEY CEREBRAS_API_KEY XAI_API_KEY && uv run eval.py --config configs/all_providers.yaml ` *(fails fast when API keys aren’t exported; ready to re-run once credentials are in the shell env)*
 
 # 2025-10-23 OpenRouter Provider
 
@@ -794,7 +794,7 @@ diff --git a/src/providers/openai_provider.py b/src/providers/openai_provider.py
 
 ## validate
 - `uv run python -m compileall src/providers/openai_provider.py`
-- `uv run eval.py --config configs/all_providers.yaml --num-runs 1` *(requires valid OpenAI GPT-5 credentials; run once keys are available to confirm preflight succeeds without temperature override failures).*
+- `uv run eval.py --config configs/all_providers.yaml ` *(requires valid OpenAI GPT-5 credentials; run once keys are available to confirm preflight succeeds without temperature override failures).*
 
 # 2025-10-23 Tighten CUDA/Triton Prompt Contracts
 
@@ -863,7 +863,7 @@ diff --git a/src/prompt_constructor.py b/src/prompt_constructor.py
 
 ## validate
 - `uv run python -m compileall src/prompt_constructor.py`
-- (Optional) `uv run eval.py --config configs/all_providers.yaml --num-runs 1` once provider API keys are configured, to observe improved compilation rates across non-Gemini models.
+- (Optional) `uv run eval.py --config configs/all_providers.yaml ` once provider API keys are configured, to observe improved compilation rates across non-Gemini models.
 
 # 2025-10-23 Formatter Beta & Triton Guardrails
 
@@ -1019,7 +1019,7 @@ diff --git a/src/utils.py b/src/utils.py
 
 ## validate
 - `uv run python -m compileall config.py eval.py src/batch_runner.py src/raw/runner.py src/prompt_constructor.py src/utils.py`
-- `uv run python eval.py --config configs/all_providers.yaml --num-runs 1 --profile-stages --verbose --groq-formatter-beta`
+- `uv run python eval.py --config configs/all_providers.yaml  --profile-stages --verbose --groq-formatter-beta`
 - `uv run python - <<'PY'` (case-insensitive code fence check)```
 import sys
 sys.path.append('src')
@@ -1070,7 +1070,7 @@ diff --git a/README.md b/README.md
 ```
 
 ## validate
-- `uv run python eval.py --config configs/test_visualization.yaml --num-runs 1 --profile-stages --verbose --groq-formatter-beta`
+- `uv run python eval.py --config configs/test_visualization.yaml  --profile-stages --verbose --groq-formatter-beta`
 
 # 2025-10-24 Lift Raw Token Budget
 
@@ -1166,7 +1166,7 @@ diff --git a/src/raw/runner.py b/src/raw/runner.py
  ```
 
 ## validate
-- `uv run python eval.py --config configs/all_providers.yaml --num-runs 1` (after exporting required API keys)
+- `uv run python eval.py --config configs/all_providers.yaml ` (after exporting required API keys)
 
 # 2025-10-24 Widen Provider Handshake Tokens
 
@@ -1186,7 +1186,7 @@ diff --git a/src/providers/__init__.py b/src/providers/__init__.py
 ```
 
 ## validate
-- `uv run python eval.py --config configs/all_providers.yaml --num-runs 1`
+- `uv run python eval.py --config configs/all_providers.yaml `
 
 # 2025-10-24 Revert Context Telemetry Monitor
 
@@ -1373,7 +1373,7 @@ diff --git a/src/batch_runner.py b/src/batch_runner.py
 ```
 
 ## validate
-- `uv run python eval.py --config configs/all_providers.yaml --num-runs 1`
+- `uv run python eval.py --config configs/all_providers.yaml `
 
 # 2025-10-23 Fix solve_and_add_scaled_vector filename
 
@@ -1702,7 +1702,7 @@ diff --git a/configs/all_providers.yaml b/configs/all_providers.yaml
 ```
 
 ## validate
-- `uv run python eval.py --config configs/all_providers.yaml --num-runs 1 --profile-stages --verbose --groq-formatter-beta`
+- `uv run python eval.py --config configs/all_providers.yaml  --profile-stages --verbose --groq-formatter-beta`
 
 # 2025-10-23 Provider Hello Preflight & Remove KB3 Fallbacks
 
@@ -1891,4 +1891,1420 @@ diff --git a/src/agentic/runner/main.py b/src/agentic/runner/main.py
 ```
 
 ## validate
-- `uv run python eval.py --config configs/test_visualization.yaml --num-runs 1 --profile-stages --verbose --groq-formatter-beta`
+- `uv run python eval.py --config configs/test_visualization.yaml  --profile-stages --verbose --groq-formatter-beta`
+# 2025-10-25 Unify logging + artifacts
+
+## rationale
+Provide identical plain-text logging and manifest-driven artifacts for raw and agentic runs, enforce shared concurrency defaults, and document the new workflow so debugging stays consistent across providers.
+
+## patch
+```diff
+diff --git a/src/agentic/runner/main.py b/src/agentic/runner/main.py
+@@
+-    output_path, latest_output_path, run_dir, run_id, timestamp_obj = derive_output_paths(
+-        config,
+-        provider_wrapper.config.provider,
+-        provider_wrapper.config.model,
+-        timestamp=run_timestamp,
+-    )
++    run_dir, run_id, timestamp_obj = derive_output_paths(
++        config,
++        provider_wrapper.config.provider,
++        provider_wrapper.config.model,
++        timestamp=run_timestamp,
++    )
+@@
+-    print("[Agentic] Writing results to", output_path)
+-    agent.run(
+-        output_path=str(output_path),
++    agent.run(
++        output_path=None,
+@@
+-    print("[Agentic] Completed agentic benchmark run")
+-
+-    summary_path, summary_stats = build_agentic_summary(
+-        latest_output_path.parent,
+-        output_path,
+-        dataset.problem_states,
+-    )
+-
+-    if summary_stats.get("records"):
+-        print(
+-            f"[Agentic] Aggregated {summary_stats['records']} problem(s) from iteration {summary_stats['latest_iteration']}."
+-        )
+-
+-    if summary_path.exists() and output_path != summary_path:
+-        try:
+-            shutil.copy2(summary_path, output_path)
+-        except Exception as exc:
+-            print(
+-                f"[Agentic] Warning: failed to persist timestamped summary at {output_path}: {exc}"
+-            )
+-
+-    resolved_results = summary_path
+-
+-    return {
+-        "results_path": str(resolved_results),
+-        "timestamped_path": str(output_path),
+-        "run_dir": str(latest_output_path.parent),
+-    }
++    print("[Agentic] Completed agentic benchmark run")
++
++    artifacts = emit_agentic_artifacts(
++        config,
++        run_dir,
++        run_id,
++        timestamp_obj,
++        dataset.problem_states,
++        agent.memories,
++        iteration_num,
++        temperature,
++        ancestor_num,
++    )
++
++    return artifacts
+diff --git a/src/batch_runner.py b/src/batch_runner.py
+@@
+-    raw_concurrency = model_entry.get(
+-        "raw_concurrency",
+-        yaml_data.get("raw_concurrency", raw_defaults.get("cpu_concurrency", 8)),
+-    )
+-    raw_gpu_concurrency = model_entry.get(
+-        "raw_gpu_concurrency",
+-        yaml_data.get("raw_gpu_concurrency", raw_defaults.get("gpu_concurrency", 1)),
+-    )
+-    raw_max_jobs = model_entry.get(
+-        "raw_max_jobs",
+-        yaml_data.get("raw_max_jobs", raw_defaults.get("max_jobs", 8)),
+-    )
++    raw_settings = yaml_data.get("raw", {}) or {}
++
++    raw_concurrency = cli_overrides.get("raw_concurrency")
++    if raw_concurrency is None:
++        raw_concurrency = yaml_data.get("raw_concurrency")
++    if raw_concurrency is None:
++        raw_concurrency = raw_settings.get("cpu_concurrency")
++    if raw_concurrency is None:
++        raw_concurrency = raw_defaults.get("cpu_concurrency", 1)
++    raw_concurrency = int(raw_concurrency)
++
++    raw_gpu_concurrency = cli_overrides.get("raw_gpu_concurrency")
++    if raw_gpu_concurrency is None:
++        raw_gpu_concurrency = yaml_data.get("raw_gpu_concurrency")
++    if raw_gpu_concurrency is None:
++        raw_gpu_concurrency = raw_settings.get("gpu_concurrency")
++    if raw_gpu_concurrency is None:
++        raw_gpu_concurrency = raw_defaults.get("gpu_concurrency", 1)
++    raw_gpu_concurrency = int(raw_gpu_concurrency)
++
++    raw_max_jobs = cli_overrides.get("raw_max_jobs")
++    if raw_max_jobs is None:
++        raw_max_jobs = yaml_data.get("raw_max_jobs")
++    if raw_max_jobs is None:
++        raw_max_jobs = raw_settings.get("max_jobs")
++    if raw_max_jobs is None:
++        raw_max_jobs = raw_defaults.get("max_jobs", 8)
++    raw_max_jobs = int(raw_max_jobs)
+diff --git a/README.md b/README.md
+@@
+-├── outputs/                 # Agentic run outputs (raw JSONL traces)
+-├── runs/                    # Raw run outputs (per-problem JSONL)
++├── outputs/                 # Legacy agentic outputs (JSONL, kept for back-compat)
++├── runs/                    # Raw & agentic run artifacts (manifests + per-problem logs)
+```
+
+## validate
+- `uv sync`
+- `uv run python eval.py --config configs/quick_test.yaml `
+- Inspect `runs/<timestamp>_*` to confirm manifest, summaries, and history files exist for both raw and agentic modes.
+
+# 2025-10-25 Increase raw concurrency defaults
+
+## rationale
+Run every target as fast as possible by raising the shared CPU/GPU worker pools so a single-problem sweep finishes quickly when `num_runs=1`.
+
+## patch
+```diff
+diff --git a/configs/all_providers.yaml b/configs/all_providers.yaml
+@@
+-  raw:
+-    cpu_concurrency: 4
+-    gpu_concurrency: 1
+-    max_jobs: 8
++  raw:
++    cpu_concurrency: 16
++    gpu_concurrency: 2
++    max_jobs: 16
+@@
+-raw_concurrency: 4
+-raw_gpu_concurrency: 1
+-raw_max_jobs: 8
++raw_concurrency: 16
++raw_gpu_concurrency: 2
++raw_max_jobs: 16
+diff --git a/README.md b/README.md
+@@
+-- Raw runs now parallelize LLM prompting and compilation prep across multiple CPU workers (default: 4) that feed a shared GPU evaluation queue.
+-- Override CPU fan-out globally via YAML (`raw_concurrency: 4`) or CLI overrides—per-model overrides are disabled so every target uses the same worker pool.
+-- Tune GPU queue throughput with `raw_gpu_concurrency` (default 1 consumer thread) if the device has headroom.
++- Raw runs now parallelize LLM prompting and compilation prep across multiple CPU workers (default: 16) that feed a shared GPU evaluation queue.
++- Override CPU fan-out globally via YAML (`raw_concurrency: 16`) or CLI overrides—per-model overrides are disabled so every target uses the same worker pool.
++- Tune GPU queue throughput with `raw_gpu_concurrency` (default 2 consumer threads) if the device has headroom.
+```
+
+## validate
+- `uv run python eval.py --config configs/quick_test.yaml `
+- Confirm job logs show 16 CPU workers dispatched with GPU queue size 2.
+
+# 2025-10-25 Add quick_test config
+
+## rationale
+Provide a checked-in smoke-test YAML so users can immediately run a three-problem raw sweep with the new concurrency defaults.
+
+## patch
+```diff
+diff --git a/configs/quick_test.yaml b/configs/quick_test.yaml
+new file mode 100644
+@@
++description: Minimal smoke-test sweep (single provider/model, three TritonBench problems).
++
++modes:
++  - raw
++
++languages:
++  - triton
++
++models:
++  - provider: groq
++    model: llama-3.1-8b-instant
++
++defaults:
++  num_runs: 1
++  profile_stages: false
++
++verbose: true
++profile_stages: false
++fast_p_threshold: null
++
++hardware:
++  gpu_architecture: Ampere
++  gpu_id: 0
++
++problems:
++  levels: [1]
++  problem_ids: null
++  max_problems: 3
++
++artifacts:
++  json_dir: json
++  plots_dir: plots
++
++visualization:
++  enabled: false
+```
+
+## validate
+- `uv run python eval.py --config configs/quick_test.yaml `
+- Ensure run directory `runs/<timestamp>_raw_triton_groq_llama-3_1-8b-instant/` exists with manifest and three problem folders.
+
+# 2025-10-25 Add test_providers config
+
+## rationale
+Ship a multi-provider smoke-test config equivalent to `all_providers.yaml`, but intended for one-pass validation runs.
+
+## patch
+```diff
+diff --git a/configs/test_providers.yaml b/configs/test_providers.yaml
+new file mode 100644
+@@
++description: Multi-provider smoke test mirroring all_providers (single run each).
++
++modes:
++  - raw
++  - agentic
++
++languages:
++  - cuda
++  - triton
++
++models:
++  - provider: gemini
++    model: gemini-2.5-pro
++  - provider: gemini
++    model: gemini-2.5-flash
++  - provider: anthropic
++    model: claude-sonnet-4-5
++  - provider: anthropic
++    model: claude-haiku-4-5
++  - provider: openai
++    model: gpt-5
++  - provider: openrouter
++    model: z-ai/glm-4.6
++  - provider: xai
++    model: grok-code-fast-1
++  - provider: xai
++    model: grok-4-fast-reasoning
++  - provider: xai
++    model: grok-4-0709
++  - provider: groq
++    model: moonshotai/kimi-k2-instruct-0905
++
++defaults:
++  num_runs: 1
++  profile_stages: true
++  raw:
++    cpu_concurrency: 16
++    gpu_concurrency: 2
++    max_jobs: 16
++
++verbose: true
++profile_stages: true
++fast_p_threshold: null
++raw_concurrency: 16
++raw_gpu_concurrency: 2
++raw_max_jobs: 16
++
++hardware:
++  gpu_architecture: Ampere
++  gpu_id: 0
++
++problems:
++  levels: [1, 2]
++  problem_ids: null
++  max_problems: 100
++
++agentic:
++  max_debug_attempts: 3
++  max_optimization_cycles: 2
++  reflector_model: gpt-4-turbo
++  optimizer_model: gpt-4-turbo
++
++artifacts:
++  json_dir: json
++  plots_dir: plots
++
++visualization:
++  enabled: true
+```
+
+## validate
+- `uv run python eval.py --config configs/test_providers.yaml`
+- Confirm `runs/` contains raw + agentic manifests for each provider/model entry.
+
+# 2025-10-26 Truncate formatted output previews
+
+## rationale
+When printing results to the terminal we only need a glimpse of the final formatted kernel. Show the first three lines, an ellipsis, and the last three lines, then point users to the on-disk artifact for full inspection.
+
+## patch
+```diff
+diff --git a/src/raw/runner.py b/src/raw/runner.py
+@@
+ def _problem_directory_name(problem_id: int, problem_name: str | None) -> str:
+     base = problem_name or f"problem_{problem_id}"
+     return f"kernel_{problem_id}_{sanitize_component(base)}"
+
+
+def _print_error(message: str) -> None:
+@@
+def _print_message_block(title: str, content: str | list) -> None:
+@@
+def _print_formatted_preview(title: str, file_path: Path, directory: Path) -> None:
+@@
+        _write_text(problem_dir / "reference.py", record.get("ref_arch_src"))
+        _write_text(problem_dir / "generated_code.py", record.get("generated_code"))
+        _print_formatted_preview(
+            f"[Raw] Formatted output for {problem_dir.name}",
+            problem_dir / "generated_code.py",
+            problem_dir,
+        )
+diff --git a/src/agentic/agents/OptimAgent.py b/src/agentic/agents/OptimAgent.py
+@@
+def _truncate_lines(lines: List[str], head: int = 10, tail: int = 5) -> List[str]:
+@@
+def _format_messages(messages: Iterable[Dict[str, Any]]) -> str:
+@@
+def _stringify_response(response: Any) -> str:
+@@
+def _print_error(message: str) -> None:
+@@
+diff --git a/src/agentic/runner/main.py b/src/agentic/runner/main.py
+@@
+def _kernel_dir_name(problem_name: str) -> str:
+    return sanitize_filename(problem_name)
+
+
+def _print_formatted_preview(title: str, file_path: Path, directory: Path) -> None:
+@@
+        final_code = _final_code(mem)
+        _write_text(problem_dir / "final_code.py", final_code)
+
+        raw_candidates = getattr(mem, "raw_code", None)
+        if raw_candidates and isinstance(raw_candidates, list):
+            _write_text(problem_dir / "last_raw_candidate.py", raw_candidates[0] or "")
+
+        _print_formatted_preview(
+            f"[Agentic] Formatted output for {problem_dir.name}",
+            problem_dir / "final_code.py",
+            problem_dir,
+        )
+diff --git a/src/batch_runner.py b/src/batch_runner.py
+@@
+-    run_plan.sort(key=lambda entry: (0 if entry[0] == "agentic" else 1, entry[1], entry[2].get("provider", "")))
++    run_plan.sort(key=lambda entry: 0 if entry[0] == "agentic" else 1)
+```
+
+## validate
+- `uv run python eval.py --config configs/quick_test.yaml`
+- Confirm console output shows truncated previews plus absolute paths for each kernel's formatted code.
+
+# 2025-10-26 Record run elapsed seconds
+
+## rationale
+Surface the total wall-clock for each provider/model sweep so slow runs (e.g., GROK-4) are obvious without external profiling.
+
+## patch
+- Track run start/end in `src/raw/runner.py`, print the elapsed time, write `elapsed_seconds` into `manifest.yaml`, and return it with the artifact bundle.
+- Mirror the same timing logic for agentic runs (`src/agentic/runner/main.py`, `emit_agentic_artifacts`) so manifests capture comparable numbers.
+- Bubble the timing through `_run_and_collect` and batch caching (`src/batch_runner.py`) so cached payloads retain the measurement.
+
+## validate
+- `uv run python eval.py --config configs/test_providers.yaml`
+- Observe `Completed run ... in X.Ys` messages and confirm the same values appear in each run directory’s `manifest.yaml` under `elapsed_seconds`.
+
+# 2025-10-26 Disable grok-4 models in smoke test
+
+## rationale
+XAI grok-4 requests stalled for >30 minutes; removing them from the smoke suite keeps quick validation fast.
+
+## patch
+- Drop `xai/grok-4-0709` and `xai/grok-4-fast-reasoning` from `configs/test_providers.yaml` so only responsive providers remain.
+- Update the README config table to reflect the new model count (8).
+
+## validate
+- `uv run python eval.py --config configs/test_providers.yaml`
+- Confirm the run skips grok-4 entries and completes without long waits.
+
+# 2025-10-26 Align agentic models with generator
+
+## rationale
+Ensure agentic runs evaluate the requested provider/model end-to-end by reusing the generator model for optimizer/reflector phases instead of hard-coded `gpt-4-turbo`.
+
+## patch
+- Default `AgenticConfig` reflective/optimizer fields to `None` (`config.py`).
+- When loading YAML, stop injecting explicit model names and override the agentic config to the current `generator_model` in `yaml_to_benchmark_config` (`src/batch_runner.py`).
+- Drop `reflector_model` / `optimizer_model` entries from shipped configs and documentation.
+
+## validate
+- `uv run python eval.py --config configs/only_kimi.yaml`
+- Inspect manifest metadata to confirm the agentic runs hit Groq Kimi instead of a secondary model.
+
+# 2025-10-26 Tighten agentic log truncation
+
+## rationale
+Ensure every agentic API request/response stays readable by limiting each block to 3 leading lines, `...`, and 3 trailing lines (total ≤7 rows) to eliminate console spam from large prompts.
+
+## patch
+- Update `_truncate_lines` in `src/agentic/agents/OptimAgent.py` to use defaults `head=3`, `tail=3` so message and response logs follow the 7-line preview format.
+
+## validate
+- Trigger an agentic run (e.g., `uv run python eval.py --config configs/test_providers.yaml`) and confirm each `=== AGENTIC LLM REQUEST/RESPONSE ===` block shows at most 3 lines, an ellipsis, and 3 lines of content.
+
+# 2025-10-27 Suppress agentic prompt/response bodies
+
+## rationale
+Keep the console focused on phase transitions by hiding full prompts/responses for agentic requests.
+
+## patch
+- Replace `_format_messages`, `_format_kwargs`, and `_stringify_response` to emit placeholder strings rather than the full payload in `src/agentic/agents/OptimAgent.py`.
+
+## validate
+- `uv run python eval.py --config configs/test_providers.yaml`
+- Observe that each agentic stage prints only the phase banner (request/response) without message content.
+
+# 2025-10-27 Restore only_kimi config
+
+## rationale
+Provide a dedicated Groq Kimi baseline to measure infrastructure overhead with a single dependable provider.
+
+## patch
+- Reintroduce `configs/only_kimi.yaml` covering raw + agentic (cuda/triton) runs for `moonshotai/kimi-k2-instruct-0905`.
+- Document the preset again in README’s configuration table.
+
+## validate
+- `uv run python eval.py --config configs/only_kimi.yaml`
+- Confirm both raw and agentic manifests contain `elapsed_seconds` and use the Kimi model in every stage.
+
+# 2025-10-26 Harmonize Progress Output
+
+## rationale
+- Remove per-kernel spam and make raw evaluation emit only the requested Generation/Evaluation progress bars so the Kimi run stays readable.
+- Give the agentic loop the same treatment: stage-scoped progress bars, silent iteration logs, and no per-problem request chatter.
+- Freeze batch ordering (raw before agentic, CUDA before Triton) and disable verbose mode in configs so the quiet output is consistent.
+
+## patch
+```diff
+diff --git a/src/batch_runner.py b/src/batch_runner.py
+@@
+-        verbose=True,
++        verbose=False,
+@@
+-    run_plan.sort(key=lambda entry: 0 if entry[0] == "agentic" else 1)
++    mode_priority = {"raw": 0, "agentic": 1}
++    language_priority = {"cuda": 0, "triton": 1}
++
++    def _sort_key(entry: tuple[str, str, Dict[str, Any]]) -> tuple[int, int, str, str]:
++        mode_key = mode_priority.get(entry[0], 99)
++        language_key = language_priority.get(entry[1], 99)
++        provider = str(entry[2].get("provider", ""))
++        model = str(entry[2].get("model", ""))
++        return (mode_key, language_key, provider, model)
++
++    run_plan.sort(key=_sort_key)
+diff --git a/src/raw/runner.py b/src/raw/runner.py
+@@
+-def _update_progress(progress_state: Dict[str, Any]) -> None:
+-    if not progress_state:
+-        return
+-
+-    lock: threading.Lock = progress_state["lock"]
+-    progress_state["completed"] += 1
+-    completed = progress_state["completed"]
+-    total = progress_state["total"]
+-    label = progress_state["label"]
+-    prefix = progress_state["prefix"]
+-    bar = _render_progress_bar(completed, total)
+-    sys.stdout.write(f"\r{prefix} {bar} {completed}/{total}")
+-    sys.stdout.flush()
+-    if completed >= total:
+-        sys.stdout.write("\n")
+-        sys.stdout.flush()
++def _update_progress(progress_state: Dict[str, Any]) -> None:
++    if not progress_state:
++        return
++
++    lock: threading.Lock = progress_state["lock"]
++    bar: tqdm = progress_state["bar"]
++    with lock:
++        bar.update(1)
++
++
++def _close_bar(bar: tqdm | None) -> None:
++    if bar is None:
++        return
++    try:
++        bar.close()
++    except Exception:  # noqa: BLE001
++        pass
+@@
+-    progress_bar = tqdm(
+-        total=len(problems),
+-        desc=f"{config.mode}-{config.language}-{config.provider}",
+-        unit="kernel",
+-        leave=False,
+-    )
+-    progress_state: Dict[str, Any] = {
+-        "lock": threading.Lock(),
+-        "total": len(problems),
+-        "completed": 0,
+-        "label": f"{config.mode}-{config.language}",
+-        "prefix": "[Raw]",
+-    }
++    cpu_bar = tqdm(
++        total=len(problems),
++        desc="Generation",
++        unit="kernel",
++        leave=True,
++        dynamic_ncols=True,
++    )
++    cpu_progress_state: Dict[str, Any] = {
++        "lock": threading.Lock(),
++        "bar": cpu_bar,
++    }
++
++    gpu_worker_count = max(1, config.raw_gpu_concurrency or 1)
++    gpu_bar = tqdm(
++        total=len(problems),
++        desc="Evaluation",
++        unit="kernel",
++        leave=True,
++        dynamic_ncols=True,
++    )
++    gpu_progress_state: Dict[str, Any] = {
++        "lock": threading.Lock(),
++        "bar": gpu_bar,
++    }
++
++    print(
++        f"[Raw] CPU workers: {worker_count} | GPU workers: {gpu_worker_count}"
++    )
++
++    manager = None
+@@
+-        shared_results[problem_id] = result
+-        _update_progress(progress_state)
++        shared_results[problem_id] = result
++        _update_progress(gpu_progress_state)
+@@
+-            initargs=(config, gen_cfg.level, job_queue, shared_results, build_root),
++            initargs=(
++                config,
++                gen_cfg.level,
++                job_queue,
++                shared_results,
++                build_root,
++                cpu_progress_state,
++            ),
+@@
+-                    _update_progress(progress_state)
+-                    print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
+-                else:
+-                    print(f"[Raw] Prepared level {gen_cfg.level} problem {pid}")
+-                    if result and not result.get("queued", True):
+-                        _update_progress(progress_state)
++                    _update_progress(cpu_progress_state)
++                    _update_progress(gpu_progress_state)
++                    _print_error(f"[Raw] CPU future failed for problem {pid}: {exc}")
++                    continue
++
++                queued = bool(result.get("queued", True))
++                if not queued:
++                    _update_progress(gpu_progress_state)
+@@
+-        _cpu_initializer(config, gen_cfg.level, job_queue, shared_results, build_root)
++        _cpu_initializer(
++            config,
++            gen_cfg.level,
++            job_queue,
++            shared_results,
++            build_root,
++            cpu_progress_state,
++        )
+         for pid in problems:
+-            print(f"[Raw] Preparing level {gen_cfg.level} problem {pid}")
+             result_info = _cpu_prepare_problem(pid)
+-                if result_info and not result_info.get("queued", True):
+-                    _update_progress(progress_state)
++            if result_info and not result_info.get("queued", True):
++                _update_progress(gpu_progress_state)
+@@
+-    print(f"[Raw] Compiled: {compiled_count}/{total} | Correct: {correct_count}/{total}")
+-    if failure_breakdown:
+-        print("[Raw] Failure breakdown:")
+-        ...
++    verbose = bool(getattr(config, "verbose", False))
++    if verbose:
++        print(f"[Raw] Compiled: {compiled_count}/{total} | Correct: {correct_count}/{total}")
++        if failure_breakdown:
++            print("[Raw] Failure breakdown:")
++            ...
+@@
+-    print(f"[Raw] Completed run for {len(problems)} problems in {elapsed_seconds:.1f}s. Results saved to {manifest_path}")
+-
+-    manager.shutdown()
++    if verbose:
++        print(f"[Raw] Completed run for {len(problems)} problems in {elapsed_seconds:.1f}s. Results saved to {manifest_path}")
++
++    if manager is not None:
++        manager.shutdown()
+diff --git a/src/agentic/agents/OptimAgent.py b/src/agentic/agents/OptimAgent.py
+@@
+-from typing import Any, Dict, Iterable, List
++from typing import Any, Dict, Iterable, List
++
++from tqdm.auto import tqdm
+@@
+-        self._iteration_count = iteration_num
+-        iteration_range = range(start_iter, start_iter + iteration_num)
+-        iter_bar = tqdm(iteration_range, desc=self.progress_desc, unit="iter", leave=False)
+-        for iter in iteration_range:
++        self._iteration_count = iteration_num
++        iteration_range = range(start_iter, start_iter + iteration_num)
++        with tqdm(
++            total=iteration_num,
++            desc=self.progress_desc,
++            unit="iter",
++            leave=False,
++            dynamic_ncols=True,
++        ) as iter_bar:
++            for iter in iteration_range:
+                 self._active_iteration = iter
+                 if output_path is not None:
+                     root, extension = os.path.splitext(output_path)
+                     iter_path = f"{root}_{iter}{extension}"
+                     mem_output_path = f"{root}_mem_{iter}.json"
+-
+-            for mem in self.memories[start_idx:(start_idx + data_len)]:
+-                self.generate_solution(mem, temperature=temperature)
++                with tqdm(
++                    total=data_len,
++                    desc="Solutions",
++                    unit="kernel",
++                    leave=False,
++                    dynamic_ncols=True,
++                ) as solution_bar:
++                    for mem in self.memories[start_idx:(start_idx + data_len)]:
++                        self.generate_solution(mem, temperature=temperature)
++                        solution_bar.update(1)
+@@
+-            for mem in self.memories[start_idx:(start_idx + data_len)]:
+-                try:
+-                    pass_call, pass_exe, call_stdout, call_stderr, exe_stdout, exe_stderr = self.dataset.test_opt_correctness(mem.raw_code[0], mem.ps.filename, tmp_dir, exe_dir=exe_dir)
+-                except Exception as e:
+-                    _print_error(f"failed to test the code for {mem.ps.filename}: {e}")
+-                    ...
+-                    continue
+-
+-                ...
++            with tqdm(
++                total=data_len,
++                desc="Execution",
++                unit="kernel",
++                leave=False,
++                dynamic_ncols=True,
++            ) as execution_bar:
++                for mem in self.memories[start_idx:(start_idx + data_len)]:
++                    try:
++                        (
++                            pass_call,
++                            pass_exe,
++                            call_stdout,
++                            call_stderr,
++                            exe_stdout,
++                            exe_stderr,
++                        ) = self.dataset.test_opt_correctness(mem.raw_code[0], mem.ps.filename, tmp_dir, exe_dir=exe_dir)
++                    except Exception as e:
++                        _print_error(f"failed to test the code for {mem.ps.filename}: {e}")
++                        ...
++                        execution_bar.update(1)
++                        continue
++
++                    ...
++                    execution_bar.update(1)
+@@
+-            for mem in self.memories[start_idx:(start_idx + data_len)]:
+-                self.generate_reflexion(mem, temperature=temperature)
++            with tqdm(
++                total=data_len,
++                desc="Reflections",
++                unit="kernel",
++                leave=False,
++                dynamic_ncols=True,
++            ) as reflection_bar:
++                for mem in self.memories[start_idx:(start_idx + data_len)]:
++                    self.generate_reflexion(mem, temperature=temperature)
++                    reflection_bar.update(1)
+@@
+-        try:
+-            request_payload = {
+-                "stage": "generate_solution",
+-                ...
+-            }
+-            print(
+-                f"[Agentic] Iter {self._active_iteration} request "
+-                f"(solution) -> {mem.ps.filename}"
+-            )
+-            response_obj = self.model.generate(msg, temperature=temperature, max_tokens=15000)
++        try:
++            response_obj = self.model.generate(msg, temperature=temperature, max_tokens=15000)
+@@
+-        print(
+-            f"[Agentic] Iter {self._active_iteration} response "
+-            f"(solution) <- {mem.ps.filename}"
+-        )
+@@
+-        request_payload = {
+-            "stage": "generate_reflection",
+-            ...
+-        }
+-        print(
+-            f"[Agentic] Iter {self._active_iteration} request "
+-            f"(reflection) -> {mem.ps.filename}"
+-        )
+-
+         try:
+             response_obj = self.model.generate(reflect_msg, temperature=temperature)
+@@
+-        print(
+-            f"[Agentic] Iter {self._active_iteration} response "
+-            f"(reflection) <- {mem.ps.filename}"
+-        )
+```
+
+## validation
+- `uv run python -m compileall src/batch_runner.py src/raw/runner.py src/agentic/agents/OptimAgent.py`
+- Manual log review: ensure raw runs show only Generation/Evaluation bars and agentic runs display stage bars without per-problem chatter.
+
+# 2025-10-26 Fix Raw Progress Multiprocessing
+
+## rationale
+- `uv run python eval.py --config configs/only_kimi.yaml` crashed because the raw runner passed a `threading.Lock` inside the progress state to worker processes, which `spawn` cannot pickle.
+- Keep the dual progress bars while ensuring only the parent process touches the locks/bars.
+
+## patch
+- `src/raw/runner.py`: stop storing progress state in the child initializer, move `_update_progress` calls to the parent loop (both success and failure paths), and update the sequential path accordingly.
+
+## validation
+- `uv run python -m compileall src/raw/runner.py`
+- Re-run `uv run python eval.py --config configs/only_kimi.yaml` (expect progress bars without the pickling failure; execution still depends on provider access).
+
+# 2025-10-26 Rate Limit Backoff
+
+## rationale
+- Raw runs routinely hit Groq’s 429 rate limits when we hammer 100 kernels in parallel; we received errors telling us to “try again in 268.8ms” and currently abort the kernel entirely.
+- Insert a simple retry loop (up to 3 attempts) with a 10s pause so temporary rate spikes can clear without losing the batch.
+- Apply the same logic to the formatter call path since it also consumes LLM quota.
+
+## patch
+- `src/raw/runner.py`: wrap provider and formatter `generate` calls in retry loops that catch rate-limit signatures (`"rate limit"`/`"429"`) and sleep before retrying; keep existing verbose logging.
+
+## validation
+- `uv run python -m compileall src/raw/runner.py`
+- Re-run `uv run python eval.py --config configs/only_kimi.yaml` to confirm the rate-limit error now pauses and continues rather than failing the target.
+
+# 2025-10-26 TritonBench Expansion Blueprint & Full Eval Utilities
+
+## rationale
+- Document a concrete plan for importing the full TritonBench corpus so agentic benchmarks can cover every kernel.
+- Provide a scripted entry point (`scripts/run_full_tritonbench_eval.sh`) and config (`configs/all_providers_full.yaml`) to run all providers across the expanded dataset with logging and visualization.
+
+## patch
+- Added `docs/tritonbench_corpus_expansion.md` outlining sourcing, normalization, integration, and validation steps.
+- Created `configs/all_providers_full.yaml` that mirrors the multi-provider matrix while removing the problem cap and routing plots to `plots/full/`.
+- Added `scripts/run_full_tritonbench_eval.sh` to tee command output into timestamped logs and accept extra CLI overrides.
+
+## validate
+- `chmod +x scripts/run_full_tritonbench_eval.sh`
+- `uv run python -m compileall src/raw/runner.py` (ensures code touched indirectly still compiles post-change).
+- Smoke test (optional) `scripts/run_full_tritonbench_eval.sh --num-runs 5 --mode agentic --language cuda` once the full dataset is staged.
+
+# 2025-10-26 Raw-Only Mega Eval Harness
+
+## rationale
+- Provide a turnkey configuration/script for bulk raw-only evaluation while the agentic corpus remains sparse.
+- Dedicate plot output to `plots/raw/` to avoid mixing with agentic experiments.
+
+## patch
+- Added `configs/all_providers_raw.yaml` (raw-only, cuda+triton languages, `max_problems: 100`).
+- Added `scripts/run_full_raw_eval.sh` that mirrors the full-run helper but targets the raw-only config.
+
+## validate
+- `chmod +x scripts/run_full_raw_eval.sh`
+- Optional smoke: `scripts/run_full_raw_eval.sh --num-runs 5 --language cuda`.
+# 2025-10-27 Modal Raw GPU Runner
+
+## rationale
+- Introduce a Modal-managed path for raw kernel runs with configurable CUDA image, GPU tier, and strict default timeouts.
+- Default raw CPU worker settings now honor the host's logical core count via a `max` sentinel across every YAML config.
+- Forward `GROQ_API_KEY` into Modal jobs while documenting setup, hard-failing token issues, and preserving the three-command quickstart.
+
+## patch
+```diff
+diff --git a/README.md b/README.md
+index 4cb6d78..8554074 100644
+--- a/README.md
++++ b/README.md
+@@ -42,8 +42,8 @@ KernelBench-v3/
+ ├── data/TritonBench/        # TritonBench dataset & metrics (copied in repo)
+ ├── json/                    # Cached aggregate metrics per mode/language/model
+ ├── plots/                   # Visualization artifacts (PNG only)
+-├── outputs/                 # Agentic run outputs (raw JSONL traces)
+-├── runs/                    # Raw run outputs (per-problem JSONL)
++├── outputs/                 # Legacy agentic outputs (JSONL, kept for back-compat)
++├── runs/                    # Raw & agentic run artifacts (manifests + per-problem logs)
+ ├── scripts/                 # Legacy scripts (generate, eval, analysis)
+ ├── src/
+ │   ├── providers/           # Provider wrappers (OpenAI, Groq, etc.)
+@@ -67,6 +67,15 @@ cd /home/infatoshi/gpu_benchmarks/KernelBench-v3
+ ```
+ 
+ ### 2. Automated Setup & Smoke Test
++
++The repository is now an [uv](https://github.com/astral-sh/uv) project. After cloning you can bring up a fresh environment with:
++
++```bash
++uv sync
++source .venv/bin/activate
++```
++
++This creates `.venv` and installs every dependency declared in `pyproject.toml`.
+ ```bash
+ bash setup_and_test.sh
+ ```
+@@ -85,7 +94,25 @@ export GROQ_API_KEY="your-groq-key"  # required for smoke tests & Groq runs
+ # export GEMINI_API_KEY="your-gemini-key"
+ ```
+ 
+-Formatter overrides (beta) are configured via CLI/YAML—see [Formatter Beta](#formatter-beta-optional).
++Formatter overrides are configured via CLI/YAML—see [Formatter (Always On)](#formatter-always-on).
++
++### Modal Raw GPU Runs (Experimental)
++
++Modal orchestration currently supports **raw kernels only**; the agentic pipeline remains offline to avoid runaway GPU costs.
++
++#### Quickstart
++
++```bash
++git clone https://github.com/Infatoshi/KernelBench-v3.git && cd KernelBench-v3
++bash setup.sh
++bash run.sh
++```
++
++`setup.sh` installs `uv`, synchronizes the project environment, and prompts you to create a Modal token via `modal token new`. `run.sh` submits the Modal job (`tools/modal_raw.py`) that provisions the CUDA image, syncs the repo in a writable workspace, and launches the raw benchmark.
++
++Configuration lives in `configs/modal_raw.yaml`. Adjust the `modal.image` block to change the CUDA version or Ubuntu tag (`ubuntu24.04` by default), and update `modal.gpu.name` to target a different GPU tier. The default subprocess timeout is 120 seconds; set `MODAL_RUN_TIMEOUT=0` and `modal.timeouts.process_seconds: 0` if you need to disable the safeguard.
++
++`run.sh` forwards `GROQ_API_KEY` to Modal automatically when the variable is set locally; the task logs whether the secret was attached before submitting the job. If Modal credentials are missing, the script aborts with instructions to rerun `uv run modal token new`.
+ 
+ ---
+ 
+@@ -114,34 +141,29 @@ BenchmarkConfig(
+ 
+ You can modify defaults directly or override via CLI flags.
+ 
+-### Formatter Beta (Optional)
++### Formatter (Always On)
+ 
+-- Enable the Groq-based formatter on the CLI with `--groq-formatter-beta`, or provide explicit overrides:
+-  - `--formatter-provider groq`
+-  - `--formatter-model moonshotai/kimi-k2-instruct-0905`
+-  - `--formatter-base-url https://api.groq.com/openai/v1`
+-- YAML configs support a `formatter` block on each model:
++- The Groq formatter now runs for every generation—there is no concise/disabled mode.
++- Override provider/model globally via CLI (`--formatter-provider`, `--formatter-model`, `--formatter-base-url`) or YAML defaults:
+ 
+   ```yaml
+   defaults:
+     formatter:
+       provider: groq
+       model: moonshotai/kimi-k2-instruct-0905
+-  models:
+-    - provider: openai
+-      model: gpt-5
+-      formatter:
+-        provider: groq
+-        model: moonshotai/kimi-k2-instruct-0905
++      base_url: https://api.groq.com/openai/v1
+   ```
+ 
++- Per-model overrides remain available, but leaving them unset inherits the global defaults so that every kernel gets a formatted candidate.
++
+ The formatter performs a second LLM pass to enforce a single fenced `python` block containing a complete `ModelNew` implementation, complementing the stricter CUDA/Triton prompts in `src/prompt_constructor.py`.
+ 
+ ### Raw Concurrency
+ 
+-- Raw runs now parallelize LLM prompting and compilation prep across multiple CPU workers (default: 8) that feed a shared GPU evaluation queue.
+-- Override CPU fan-out via YAML (`raw_concurrency: 4`).
+-- Tune GPU queue throughput with `raw_gpu_concurrency` (default 1 consumer thread) if the device has headroom.
++- Raw runs now parallelize LLM prompting and compilation prep across as many CPU workers as your host exposes (default equals `os.cpu_count()`), feeding a shared GPU evaluation queue.
++- Override CPU fan-out globally via YAML with `raw_concurrency: max` (default) or any explicit integer; CLI overrides accept the same token.
++- `raw.max_jobs` follows the same convention, defaulting to the CPU thread count so job queues never bottleneck below available workers.
++- Tune GPU queue throughput with `raw_gpu_concurrency` (default 2 consumer threads) if the device has headroom.
+ - Set both to `1` for fully sequential debugging, or raise CPU workers while keeping GPU slots low to overlap compilation with execution.
+ 
+ Performance profiling is disabled by default (no GPU timing trials). Re-enable it per run with `fast_p_threshold: 1.2` or via CLI `--fast-p-threshold 1.2` if you need speedup metrics.
+@@ -150,6 +172,48 @@ Stage profiling (CPU prep, queue wait, GPU compile/correctness/perf) is off by d
+ 
+ ---
+ 
++## 📦 Run Artifact Layout
++
++Every invocation now writes a single directory under `runs/` with a timestamped slug:
++
++```
++runs/
++  20251025_012633_agentic_triton_openai_gpt-5/
++    manifest.yaml
++    kernel_001_context_attn_nopad.py/
++      summary.txt
++      instruction.txt
++      reference_solution.py
++      test_harness.py
++      final_code.py
++      last_raw_candidate.py
++      history/
++        iteration_00/solution.txt
++        iteration_00/execution.txt
++        iteration_00/performance.txt
++        iteration_00/reflection.txt
++        iteration_01/...
++    kernel_002_...
++```
++
++- **manifest.yaml** captures provider/model metadata, concurrency settings, formatter configuration, and a per-kernel summary (call/exec/perf pass flags and runtime hints).
++- The manifest also records `elapsed_seconds` (wall-clock runtime rounded to 0.1s) so you can compare how long each provider/model/problem sweep took.
++- **summary.txt** highlights the outcome for the kernel along with any errors.
++- **history/** holds plain-text logs for each iteration and stage. Requests, kwargs, responses, execution stdout/stderr, and performance diagnostics are all written without JSON so you can skim directly in the terminal.
++- Raw runs emit the same structure, with `prompt.txt`, `response_raw.txt`, `response_formatted.txt`, and `metrics.yaml` mirroring the agentic history.
++
++Legacy JSONL traces remain untouched inside `outputs/` for backwards compatibility with older analysis scripts, but new tooling should rely on the `runs/` layout.
++
++### Logging
++
++- Verbose mode is always enabled. Batch runner headers render as `mode + language + provider/model` in green, and no concise mode is exposed.
++- Raw and agentic runners dump every LLM exchange in plain text—system prompts, user prompts, kwargs, and responses—without JSON framing so the terminal output stays readable.
++- Agentic iterations record the same information under each kernel's `history/` folder for offline inspection.
++- To keep the console manageable, LLM prompts/responses and formatted kernels are truncated to head/tail slices with an ellipsis and a loud error banner is emitted whenever a stage fails.
++- Agentic runs reuse the evaluated provider/model for every phase (generation, optimizer, reflection) so metrics reflect that single LLM end-to-end.
++
++---
++
+ ## 🚀 Unified CLI Usage (`eval.py`)
+ 
+ ### Batch Mode (Recommended)
+@@ -211,8 +275,7 @@ For quick one-off tests:
+ ```bash
+ uv run python eval.py --mode raw \
+   --provider groq \
+-  --model llama-3.3-70b-versatile \
+-  --num-runs 5
++  --model llama-3.3-70b-versatile
+ ```
+ 
+ ### Examples
+@@ -446,8 +509,7 @@ problems:
+ agentic:                     # Only used if mode=agentic
+   max_debug_attempts: 3
+   max_optimization_cycles: 2
+-  reflector_model: gpt-4-turbo
+-  optimizer_model: gpt-4-turbo
++  # reflector_model and optimizer_model automatically reuse the generator model.
+ 
+ fast_p_threshold: 1.2        # Speedup threshold
+ 
+@@ -477,6 +539,8 @@ visualization:
+ | Config | Description | Models | Problems |
+ |--------|-------------|--------|----------|
+ | `quick_test.yaml` | Single model, 3 problems | Groq Llama | 3 |
++| `test_providers.yaml` | Multi-provider smoke test | 8 models | 1 |
++| `only_kimi.yaml` | Kimi K2 across all modes/languages | 1 model | full |
+ | `test_visualization.yaml` | Two models for viz testing | 2× Groq | 2 |
+ | `example_batch.yaml` | Full multi-provider comparison | 5 models | 10 |
+ | `multi_provider_benchmark.yaml` | Production benchmark | 6 models | 20 |
+@@ -497,7 +561,7 @@ Outputs saved to `visualizations/` as PNG/PDF with timestamp.
+ Run this command (preflight + benchmark) once your API keys are exported:
+ 
+ ```bash
+-uv run python eval.py --config configs/test_visualization.yaml --num-runs 1 --profile-stages --verbose --groq-formatter-beta
++uv run python eval.py --config configs/test_visualization.yaml --profile-stages --verbose
+ ```
+ 
+ > The entrypoint automatically pings each provider/model with a "Hello." request before starting the benchmark and aborts if any credentials or model names are misconfigured.
+@@ -557,4 +621,3 @@ MIT License (see `LICENSE`).
+ - KernelBench-v2 (kernelbench-v1 + triton)
+ - MultiKernelBench (i dont have the hardware yet… so pause)
+ - TritonBench (covered in geak-eval and kernelbench-v2)
+-
+diff --git a/config.py b/config.py
+index 8b4ac96..d8dd370 100644
+--- a/config.py
++++ b/config.py
+@@ -1,5 +1,6 @@
+ from dataclasses import dataclass, field
+ from typing import List, Literal
++import os
+ 
+ EvaluationMode = Literal["raw", "agentic"]
+ KernelLanguage = Literal["cuda", "triton"]
+@@ -22,8 +23,13 @@ class ProblemSetConfig:
+ class AgenticConfig:
+     max_debug_attempts: int = 3
+     max_optimization_cycles: int = 2
+-    reflector_model: str = "gpt-4-turbo"
+-    optimizer_model: str = "gpt-4-turbo"
++    reflector_model: str | None = None
++    optimizer_model: str | None = None
++
++
++def _cpu_worker_default() -> int:
++    """Return the maximum available CPU worker count."""
++    return max(1, os.cpu_count() or 1)
+ 
+ 
+ @dataclass
+@@ -43,8 +49,8 @@ class BenchmarkConfig:
+     problems: ProblemSetConfig = field(default_factory=ProblemSetConfig)
+     agentic: AgenticConfig = field(default_factory=AgenticConfig)
+     fast_p_threshold: float | None = None
+-    raw_concurrency: int = 8
++    raw_concurrency: int = field(default_factory=_cpu_worker_default)
+     raw_gpu_concurrency: int = 1
+-    raw_max_jobs: int = 8
++    raw_max_jobs: int = field(default_factory=_cpu_worker_default)
+     generation_max_tokens: int = 4096
+     formatter_max_tokens: int | None = None
+diff --git a/configs/all_providers.yaml b/configs/all_providers.yaml
+index 85ab82d..87814ea 100644
+--- a/configs/all_providers.yaml
++++ b/configs/all_providers.yaml
+@@ -11,79 +11,38 @@ languages:
+ models:
+   - provider: gemini
+     model: gemini-2.5-pro
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: gemini
+     model: gemini-2.5-flash
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: anthropic
+     model: claude-sonnet-4-5
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: anthropic
+     model: claude-haiku-4-5
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: openai
+     model: gpt-5
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+-  - provider: openai
+-    model: gpt-5-nano
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+-  - provider: openai
+-    model: gpt-5-mini
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: openrouter
+     model: z-ai/glm-4.6
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: xai
+     model: grok-code-fast-1
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: xai
+     model: grok-4-fast-reasoning
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+-  - provider: xai
+-    model: grok-4-fast-non-reasoning
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
+   - provider: xai
+     model: grok-4-0709
+-    raw_concurrency: 1
+-    raw_gpu_concurrency: 1
+-    raw_max_jobs: 1
++  - provider: groq
++    model: moonshotai/kimi-k2-instruct-0905
+ 
+ defaults:
+-  num_runs: 1
+   profile_stages: true
+   raw:
+-    cpu_concurrency: 1
+-    gpu_concurrency: 1
+-    max_jobs: 1
++    cpu_concurrency: max
++    gpu_concurrency: 2
++    max_jobs: max
+ 
+ verbose: true
+ profile_stages: true
+ fast_p_threshold: null
+-raw_concurrency: 1
+-raw_gpu_concurrency: 1
+-raw_max_jobs: 1
++raw_concurrency: max
++raw_gpu_concurrency: 2
++raw_max_jobs: max
+ 
+ hardware:
+   gpu_architecture: Ampere
+@@ -97,8 +56,6 @@ problems:
+ agentic:
+   max_debug_attempts: 3
+   max_optimization_cycles: 2
+-  reflector_model: gpt-4-turbo
+-  optimizer_model: gpt-4-turbo
+ 
+ artifacts:
+   json_dir: json
+diff --git a/src/batch_runner.py b/src/batch_runner.py
+index d4bdc0d..dd95287 100644
+--- a/src/batch_runner.py
++++ b/src/batch_runner.py
+@@ -15,11 +15,15 @@ from typing import Any, Dict, List, Tuple
+ import yaml
+ 
+ from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig
+-from metrics import compute_core_metrics, load_metrics, parse_jsonl_results, save_metrics
++from metrics import load_metrics, save_metrics
+ from providers import verify_model_responds_hello
+ 
+ GREEN = "\033[32m"
+ RESET = "\033[0m"
++HOST_CPU_COUNT = max(1, os.cpu_count() or 1)
++
++DEFAULT_FORMATTER_PROVIDER = "groq"
++DEFAULT_FORMATTER_MODEL = "moonshotai/kimi-k2-instruct-0905"
+ 
+ 
+ def load_yaml_config(yaml_path: str | Path) -> Dict[str, Any]:
+@@ -32,6 +36,28 @@ def sanitize_component(value: str) -> str:
+     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
+ 
+ 
++def _resolve_cpu_concurrency(value: object | None) -> int:
++    """Coerce CPU worker counts, honoring the 'max' sentinel."""
++    if value is None:
++        return HOST_CPU_COUNT
++    if isinstance(value, str):
++        if value.strip().lower() == "max":
++            return HOST_CPU_COUNT
++        raise ValueError(f"Unsupported cpu concurrency token: {value}")
++    return max(1, int(value))
++
++
++def _resolve_max_jobs(value: object | None) -> int:
++    """Allow YAML to specify 'max' for job fan-out."""
++    if isinstance(value, str):
++        if value.strip().lower() == "max":
++            return HOST_CPU_COUNT
++        raise ValueError(f"Unsupported max_jobs token: {value}")
++    if value is None:
++        return HOST_CPU_COUNT
++    return max(1, int(value))
++
++
+ def expand_run_matrix(yaml_data: Dict[str, Any]) -> List[Tuple[str, str, Dict[str, Any]]]:
+     """Return the (mode, language, model) combinations requested by the config."""
+     models = yaml_data.get("models", [])
+@@ -147,11 +173,11 @@ def _resolve_agentic(yaml_data: Dict[str, Any], overrides: Dict[str, Any]) -> Ag
+         ),
+         "reflector_model": ag_data.get(
+             "reflector_model",
+-            ag_defaults.get("reflector_model", "gpt-4-turbo"),
++            ag_defaults.get("reflector_model"),
+         ),
+         "optimizer_model": ag_data.get(
+             "optimizer_model",
+-            ag_defaults.get("optimizer_model", "gpt-4-turbo"),
++            ag_defaults.get("optimizer_model"),
+         ),
+     }
+ 
+@@ -175,20 +201,23 @@ def yaml_to_benchmark_config(
+     provider = model_entry.get("provider") or yaml_data.get("provider", "openai")
+     model_id = model_entry.get("model") or yaml_data.get("generator_model", "gpt-4-turbo")
+     base_url = model_entry.get("base_url") or yaml_data.get("provider_base_url")
++
+     formatter_defaults = defaults.get("formatter", {})
+-    formatter_cfg = model_entry.get("formatter", {})
+-    formatter_provider = formatter_cfg.get(
+-        "provider",
+-        yaml_data.get("formatter_provider", formatter_defaults.get("provider")),
+-    )
+-    formatter_model = formatter_cfg.get(
+-        "model",
+-        yaml_data.get("formatter_model", formatter_defaults.get("model")),
+-    )
+-    formatter_base_url = formatter_cfg.get(
+-        "base_url",
+-        yaml_data.get("formatter_base_url", formatter_defaults.get("base_url")),
+-    )
++    formatter_cfg = model_entry.get("formatter") or {}
++    if not isinstance(formatter_cfg, dict):
++        formatter_cfg = {}
++
++    formatter_provider = formatter_cfg.get("provider") or yaml_data.get("formatter_provider")
++    if not formatter_provider:
++        formatter_provider = formatter_defaults.get("provider") or DEFAULT_FORMATTER_PROVIDER
++
++    formatter_model = formatter_cfg.get("model") or yaml_data.get("formatter_model")
++    if not formatter_model:
++        formatter_model = formatter_defaults.get("model") or DEFAULT_FORMATTER_MODEL
++
++    formatter_base_url = formatter_cfg.get("base_url") or yaml_data.get("formatter_base_url")
++    if not formatter_base_url:
++        formatter_base_url = formatter_defaults.get("base_url")
+ 
+     num_runs = model_entry.get("num_runs", yaml_data.get("num_runs", defaults.get("num_runs")))
+     if "num_runs" in cli_overrides:
+@@ -200,18 +229,34 @@ def yaml_to_benchmark_config(
+     if cli_overrides.get("profile_stages") is True:
+         profile_stages = True
+ 
+-    raw_concurrency = model_entry.get(
+-        "raw_concurrency",
+-        yaml_data.get("raw_concurrency", raw_defaults.get("cpu_concurrency", 8)),
+-    )
+-    raw_gpu_concurrency = model_entry.get(
+-        "raw_gpu_concurrency",
+-        yaml_data.get("raw_gpu_concurrency", raw_defaults.get("gpu_concurrency", 1)),
+-    )
+-    raw_max_jobs = model_entry.get(
+-        "raw_max_jobs",
+-        yaml_data.get("raw_max_jobs", raw_defaults.get("max_jobs", 8)),
+-    )
++    raw_settings = yaml_data.get("raw", {}) or {}
++
++    raw_concurrency = cli_overrides.get("raw_concurrency")
++    if raw_concurrency is None:
++        raw_concurrency = yaml_data.get("raw_concurrency")
++    if raw_concurrency is None:
++        raw_concurrency = raw_settings.get("cpu_concurrency")
++    if raw_concurrency is None:
++        raw_concurrency = raw_defaults.get("cpu_concurrency")
++    raw_concurrency = _resolve_cpu_concurrency(raw_concurrency)
++
++    raw_gpu_concurrency = cli_overrides.get("raw_gpu_concurrency")
++    if raw_gpu_concurrency is None:
++        raw_gpu_concurrency = yaml_data.get("raw_gpu_concurrency")
++    if raw_gpu_concurrency is None:
++        raw_gpu_concurrency = raw_settings.get("gpu_concurrency")
++    if raw_gpu_concurrency is None:
++        raw_gpu_concurrency = raw_defaults.get("gpu_concurrency", 1)
++    raw_gpu_concurrency = int(raw_gpu_concurrency)
++
++    raw_max_jobs = cli_overrides.get("raw_max_jobs")
++    if raw_max_jobs is None:
++        raw_max_jobs = yaml_data.get("raw_max_jobs")
++    if raw_max_jobs is None:
++        raw_max_jobs = raw_settings.get("max_jobs")
++    if raw_max_jobs is None:
++        raw_max_jobs = raw_defaults.get("max_jobs")
++    raw_max_jobs = _resolve_max_jobs(raw_max_jobs)
+ 
+     generation_max_tokens = model_entry.get("generation_max_tokens")
+     if generation_max_tokens is None:
+@@ -251,7 +296,7 @@ def yaml_to_benchmark_config(
+         formatter_model=formatter_model,
+         formatter_base_url=formatter_base_url,
+         generator_model=model_id,
+-        verbose=yaml_data.get("verbose", False),
++        verbose=False,
+         num_runs=num_runs,
+         profile_stages=profile_stages,
+         hardware=hardware,
+@@ -270,6 +315,10 @@ def yaml_to_benchmark_config(
+ 
+     config = BenchmarkConfig(**config_kwargs)
+ 
++    if config.agentic:
++        config.agentic.reflector_model = config.generator_model
++        config.agentic.optimizer_model = config.generator_model
++
+     return config
+ 
+ 
+@@ -292,28 +341,20 @@ def json_cache_path(
+     filename = f"{mode_safe}_{language_safe}_{provider_safe}_{model_safe}.json"
+     return json_dir / filename
+ 
+-
+-def collect_metrics(results_path: Path) -> Dict[str, Any]:
+-    records = parse_jsonl_results(results_path)
+-    metrics = compute_core_metrics(records)
+-    return {
+-        "metrics": metrics,
+-        "total_records": len(records),
+-    }
+-
+-
+ def _run_and_collect(
+     config: BenchmarkConfig,
+     run_fn,
+ ) -> Dict[str, Any]:
+     run_artifacts = run_fn(config) or {}
+-    results_path = run_artifacts.get("results_path")
+-    if results_path is None:
+-        raise RuntimeError("Runner did not return a results_path."
++    run_dir = run_artifacts.get("run_dir")
++    if run_dir is None:
++        raise RuntimeError("Runner did not return a run directory."
+                            " Ensure run(config) returns artifact metadata.")
+     return {
+-        "results_path": Path(results_path),
+-        "run_dir": Path(run_artifacts.get("run_dir", Path(results_path).parent)),
++        "run_dir": Path(run_dir),
++        "manifest": Path(run_artifacts.get("manifest", Path(run_dir) / "manifest.yaml")),
++        "metrics": run_artifacts.get("metrics", {}),
++        "elapsed_seconds": run_artifacts.get("elapsed_seconds"),
+     }
+ 
+ 
+@@ -349,6 +390,18 @@ def run_batch_benchmark(
+ 
+     results: List[Dict[str, Any]] = []
+ 
++    mode_priority = {"raw": 0, "agentic": 1}
++    language_priority = {"cuda": 0, "triton": 1}
++
++    def _sort_key(entry: tuple[str, str, Dict[str, Any]]) -> tuple[int, int, str, str]:
++        mode_key = mode_priority.get(entry[0], 99)
++        language_key = language_priority.get(entry[1], 99)
++        provider = str(entry[2].get("provider", ""))
++        model = str(entry[2].get("model", ""))
++        return (mode_key, language_key, provider, model)
++
++    run_plan.sort(key=_sort_key)
++
+     for index, (mode, language, model_entry) in enumerate(run_plan, start=1):
+         provider = model_entry.get("provider", yaml_data.get("provider", "unknown"))
+         model_id = model_entry.get("model", yaml_data.get("generator_model", "unknown"))
+@@ -363,6 +416,7 @@ def run_batch_benchmark(
+ 
+         if cached_payload and cached_payload.get("config_fingerprint") == fingerprint:
+             metrics = cached_payload.get("metrics", {})
++            artifacts = cached_payload.get("artifacts", {})
+             print("  ↪ Using cached metrics (config fingerprint match).")
+             results.append({
+                 "provider": provider,
+@@ -372,9 +426,10 @@ def run_batch_benchmark(
+                 "status": "cached",
+                 "metrics": metrics,
+                 "metrics_path": str(cache_path),
+-                "results_path": cached_payload.get("artifacts", {}).get("results_jsonl"),
++                "artifacts": artifacts,
+                 "timestamp": cached_payload.get("timestamp"),
+                 "config_fingerprint": fingerprint,
++                "elapsed_seconds": cached_payload.get("elapsed_seconds"),
+             })
+             print(f"✅ Cached: {provider}/{model_id}\n")
+             continue
+@@ -388,19 +443,20 @@ def run_batch_benchmark(
+             else:
+                 raise ValueError(f"Unsupported mode '{mode}' in run matrix.")
+ 
+-            metrics_bundle = collect_metrics(artifact_info["results_path"])
++            metrics_bundle = artifact_info.get("metrics", {})
+             payload = {
+                 "provider": provider,
+                 "model": model_id,
+                 "mode": mode,
+                 "language": language,
+                 "timestamp": datetime.now().isoformat(),
+-                "metrics": metrics_bundle["metrics"],
++                "metrics": metrics_bundle,
+                 "config_fingerprint": fingerprint,
+                 "artifacts": {
+-                    "results_jsonl": str(artifact_info["results_path"]),
++                    "manifest": str(artifact_info.get("manifest")),
+                     "run_dir": str(artifact_info["run_dir"]),
+                 },
++                "elapsed_seconds": artifact_info.get("elapsed_seconds"),
+             }
+             save_metrics(cache_path, payload)
+ 
+```
+
+## validate
+- `bash setup.sh`
+- `MODAL_RUN_TIMEOUT=0 bash run.sh` (fails: Modal token missing)
+- `uv run python -m compileall config.py src/batch_runner.py tools/modal_raw.py src/modal_support/config.py`
+

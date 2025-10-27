@@ -1,0 +1,15 @@
+False*#*#None*#*#None*#*#Could not execute module context_attn_nopad.py_gen_triton_code_637389 due to at 26:13:
+
+    seq_start = tl.load(B_Start_Loc + batch_id)
+    seq_len = tl.load(B_Seqlen + batch_id)
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = tl.arange(0, BLOCK_N)
+    offs_d = tl.arange(0, BLOCK_DMODEL)
+
+    mask_m = offs_m < seq_len
+
+    # Compute Q offset
+    offs_q = (seq_start + offs_m) * stride_qbs + head_id * stride_qh + offs_d * stride_qd
+             ^
+ValueError('Cannot make_shape_compatible: incompatible dimensions at index 0: 64 and 128')

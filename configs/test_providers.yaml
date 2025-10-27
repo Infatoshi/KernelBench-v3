@@ -1,4 +1,4 @@
-description: Unified benchmark config covering Google, Anthropic, OpenAI, and OpenRouter models.
+description: Multi-provider smoke test mirroring all_providers (single run each).
 
 modes:
   - raw
@@ -23,14 +23,11 @@ models:
     model: z-ai/glm-4.6
   - provider: xai
     model: grok-code-fast-1
-  - provider: xai
-    model: grok-4-fast-reasoning
-  - provider: xai
-    model: grok-4-0709
   - provider: groq
     model: moonshotai/kimi-k2-instruct-0905
 
 defaults:
+  num_runs: 1
   profile_stages: true
   raw:
     cpu_concurrency: max

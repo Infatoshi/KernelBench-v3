@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Literal
+import os
 
 EvaluationMode = Literal["raw", "agentic"]
 KernelLanguage = Literal["cuda", "triton"]
@@ -22,8 +23,13 @@ class ProblemSetConfig:
 class AgenticConfig:
     max_debug_attempts: int = 3
     max_optimization_cycles: int = 2
-    reflector_model: str = "gpt-4-turbo"
-    optimizer_model: str = "gpt-4-turbo"
+    reflector_model: str | None = None
+    optimizer_model: str | None = None
+
+
+def _cpu_worker_default() -> int:
+    """Return the maximum available CPU worker count."""
+    return max(1, os.cpu_count() or 1)
 
 
 @dataclass
@@ -43,8 +49,8 @@ class BenchmarkConfig:
     problems: ProblemSetConfig = field(default_factory=ProblemSetConfig)
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
     fast_p_threshold: float | None = None
-    raw_concurrency: int = 8
+    raw_concurrency: int = field(default_factory=_cpu_worker_default)
     raw_gpu_concurrency: int = 1
-    raw_max_jobs: int = 8
+    raw_max_jobs: int = field(default_factory=_cpu_worker_default)
     generation_max_tokens: int = 4096
     formatter_max_tokens: int | None = None

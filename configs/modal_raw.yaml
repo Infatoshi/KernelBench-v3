@@ -1,0 +1,47 @@
+description: Raw CUDA kernel evaluation via Modal-managed GPUs.
+
+modes:
+  - raw
+
+languages:
+  - cuda
+
+models:
+  - provider: groq
+    model: moonshotai/kimi-k2-instruct-0905
+    num_runs: 1
+
+defaults:
+  num_runs: 1
+  raw:
+    cpu_concurrency: max
+    gpu_concurrency: 1
+    max_jobs: max
+
+raw_concurrency: max
+raw_gpu_concurrency: 1
+raw_max_jobs: max
+
+modal:
+  image:
+    cuda_version: "12.8.1"
+    os_tag: "ubuntu24.04"
+    python_version: "3.12"
+  gpu:
+    name: "H100"
+    count: 1
+  timeouts:
+    process_seconds: 120
+
+artifacts:
+  json_dir: json
+  plots_dir: plots/raw_modal
+
+hardware:
+  gpu_architecture: Hopper
+  gpu_id: 0
+
+problems:
+  levels: [1]
+  problem_ids: null
+  max_problems: 1

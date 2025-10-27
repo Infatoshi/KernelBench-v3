@@ -1,4 +1,4 @@
-description: Unified benchmark config covering Google, Anthropic, OpenAI, and OpenRouter models.
+description: Full TritonBench evaluation across all configured providers/models.
 
 modes:
   - raw
@@ -51,7 +51,7 @@ hardware:
 problems:
   levels: [1, 2]
   problem_ids: null
-  max_problems: 100
+  max_problems: null
 
 agentic:
   max_debug_attempts: 3
@@ -59,7 +59,11 @@ agentic:
 
 artifacts:
   json_dir: json
-  plots_dir: plots
+  plots_dir: plots/full
 
 visualization:
   enabled: true
+  metrics:
+    - compilation_rate
+    - correctness_rate
+    - fast_1_rate

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import shutil
 import json
+import yaml
 
 try:
     import matplotlib.pyplot as plt
@@ -57,7 +58,67 @@ def compute_metrics(results: List[Dict[str, Any]]) -> Dict[str, float]:
         "fast_1_rate": (fast_1 / total * 100) if total > 0 else 0,
         "mean_runtime": sum(runtimes) / len(runtimes) if runtimes else 0,
     }
-    
+
+    return metrics
+
+
+def _load_manifest(manifest_path: Path) -> Optional[Dict[str, Any]]:
+    if not manifest_path or not manifest_path.exists():
+        return None
+    try:
+        with manifest_path.open("r", encoding="utf-8") as handle:
+            return yaml.safe_load(handle) or {}
+    except (yaml.YAMLError, OSError):
+        return None
+
+
+def _metrics_from_manifest(kernels: List[Dict[str, Any]]) -> Optional[Dict[str, float]]:
+    if not kernels:
+        return None
+
+    total = len(kernels)
+    compiled = 0
+    correct = 0
+    fast_1 = 0
+    runtimes: List[float] = []
+
+    for kernel in kernels:
+        compiled_flag = kernel.get("compiled")
+        if compiled_flag is None:
+            compiled_flag = kernel.get("call_pass")
+        correct_flag = kernel.get("correctness")
+        if correct_flag is None:
+            correct_flag = kernel.get("exe_pass")
+        fast_flag = kernel.get("fast_1")
+        if fast_flag is None:
+            fast_flag = kernel.get("perf_pass")
+
+        runtime = kernel.get("runtime_ms")
+        if runtime is None:
+            runtime = kernel.get("latency_ms")
+
+        if compiled_flag:
+            compiled += 1
+        if correct_flag:
+            correct += 1
+        if fast_flag:
+            fast_1 += 1
+        if runtime and runtime > 0:
+            try:
+                runtimes.append(float(runtime))
+            except (TypeError, ValueError):
+                continue
+
+    metrics = {
+        "total_problems": total,
+        "compiled_count": compiled,
+        "correct_count": correct,
+        "compilation_rate": (compiled / total * 100) if total else 0.0,
+        "correctness_rate": (correct / compiled * 100) if compiled else 0.0,
+        "fast_1_rate": (fast_1 / total * 100) if total else 0.0,
+        "mean_runtime": (sum(runtimes) / len(runtimes)) if runtimes else 0.0,
+    }
+
     return metrics
 def sanitize_component(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
@@ -149,6 +210,16 @@ def collect_metrics_for_visualization(
                 metrics = payload.get("metrics")
                 metrics_loaded = metrics is not None
 
+        artifacts = entry.get("artifacts") or {}
+        manifest_path = artifacts.get("manifest")
+        if not metrics and manifest_path:
+            manifest = _load_manifest(Path(manifest_path))
+            if manifest:
+                manifest_metrics = _metrics_from_manifest(manifest.get("kernels", []))
+                if manifest_metrics:
+                    metrics = manifest_metrics
+                    metrics_loaded = True
+
         if not metrics and status in {"completed", "cached"}:
             results_path = entry.get("results_path")
             records = []
@@ -157,12 +228,11 @@ def collect_metrics_for_visualization(
                 if rp.exists():
                     records = parse_jsonl_results(rp)
             elif mode == "agentic":
-                # Attempt legacy fallback for agentic runs
                 agentic_path = ensure_agentic_results(provider, model)
                 if agentic_path:
                     records = parse_jsonl_results(agentic_path)
 
-            if records:
+            if records and not metrics_loaded:
                 metrics = compute_core_metrics(records)
                 metrics_loaded = metrics is not None
 
@@ -237,7 +307,7 @@ def generate_bar_chart(model_metrics: List[Dict[str, Any]], output_dir: Path, vi
     ])
     
     models = [m["model"] for m in model_metrics]
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     for metric_name in metrics_to_plot:
         values = [float(m.get(metric_name, 0.0)) for m in model_metrics]
@@ -277,7 +347,7 @@ def generate_summary_table(model_metrics: List[Dict[str, Any]], output_dir: Path
     if not model_metrics:
         return
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     output_path = output_dir / f"summary_table_{timestamp}.md"
     
     with open(output_path, "w") as f:

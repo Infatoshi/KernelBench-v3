@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import os
-import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, TYPE_CHECKING
+from typing import Any, Dict, Iterable, List, TYPE_CHECKING
+from time import perf_counter
+
+import yaml
 
 from agentic.agents.OptimAgent import OptimAgent
 from agentic.dataloaders.TritonBench import TritonBench
@@ -21,9 +22,14 @@ if TYPE_CHECKING:  # pragma: no cover - only for type hints
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+RUNS_ROOT = PROJECT_ROOT / "runs"
+RUNS_ROOT.mkdir(parents=True, exist_ok=True)
 TRITONBENCH_ROOT = PROJECT_ROOT / "data" / "TritonBench"
 TRITONBENCH_DATA_DIR = TRITONBENCH_ROOT / "data"
 TRITONBENCH_PERF_G_DIR = TRITONBENCH_ROOT / "performance_metrics" / "perf_G"
+
+DEFAULT_FORMATTER_PROVIDER = "groq"
+DEFAULT_FORMATTER_MODEL = "moonshotai/kimi-k2-instruct-0905"
 
 
 def _find_existing_file(*relative_names: str) -> Path:
@@ -72,6 +78,26 @@ def resolve_tritonbench_paths() -> TritonBenchPaths:
     )
 
 
+def _write_text(path: Path, content: str | None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "" if content is None else str(content)
+    path.write_text(text, encoding="utf-8")
+
+
+def _write_yaml(path: Path, data: Dict[str, any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(data, handle, sort_keys=False, allow_unicode=True)
+
+
+def _kernel_dir_name(problem_name: str) -> str:
+    return sanitize_filename(problem_name)
+
+
+def _print_formatted_preview(title: str, file_path: Path, directory: Path) -> None:
+    return
+
+
 def parse_model_spec(spec: str) -> tuple[str, str]:
     default_provider = "openai"
     if ":" in spec:
@@ -98,127 +124,10 @@ def extract_problem_id(filename: str) -> int | None:
         return None
 
 
-def _parse_json_lines(path: Path) -> List[dict]:
-    records: List[dict] = []
-    if not path.exists():
-        return records
-
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or not line.startswith("{"):
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return records
 
 
-def _extract_iteration(stem: str, marker: str) -> int:
-    try:
-        return int(stem.split(marker)[-1])
-    except (ValueError, IndexError):
-        return -1
 
-
-def build_agentic_summary(
-    run_dir: Path,
-    base_output: Path,
-    problem_states: Iterable["ProblemState"],
-) -> tuple[Path, Dict[str, int]]:
-    """Aggregate per-iteration agentic outputs into a single JSONL summary."""
-
-    prefix = base_output.stem
-    summary_path = run_dir / "results.jsonl"
-
-    mem_files = sorted(
-        (p for p in run_dir.glob(f"{prefix}_mem_*.json") if p.is_file()),
-        key=lambda p: _extract_iteration(p.stem, "_mem_"),
-    )
-
-    if not mem_files:
-        raise FileNotFoundError(
-            f"No agentic memory files found for prefix '{prefix}' in {run_dir}."
-        )
-
-    latest_mem_path = mem_files[-1]
-    latest_iteration = _extract_iteration(latest_mem_path.stem, "_mem_")
-    mem_records = _parse_json_lines(latest_mem_path)
-    mem_snapshot: Dict[str, Dict] = mem_records[0] if mem_records else {}
-
-    iteration_records: Dict[str, dict] = {}
-    if latest_iteration >= 0:
-        iter_path = run_dir / f"{prefix}_{latest_iteration}.jsonl"
-        iteration_records = {
-            record.get("filename", ""): record
-            for record in _parse_json_lines(iter_path)
-            if isinstance(record, dict)
-        }
-
-    order_map: Dict[str, int] = {
-        ps.filename: index
-        for index, ps in enumerate(problem_states, start=1)
-    }
-
-    records: List[dict] = []
-    seen_files = set()
-
-    for filename, info in sorted(mem_snapshot.items()):
-        seen_files.add(filename)
-        iteration_entry = iteration_records.get(filename, {})
-
-        metadata = {
-            "call_error": info.get("call_err_msg"),
-            "exe_error": info.get("exe_err_msg"),
-            "ms": info.get("ms"),
-            "efficiency": info.get("efficiency"),
-            "iteration": latest_iteration,
-        }
-
-        if iteration_entry:
-            metadata["instruction"] = iteration_entry.get("instruction")
-            metadata["reference_label"] = iteration_entry.get("label")
-            metadata["prediction"] = iteration_entry.get("predict")
-
-        records.append(
-            {
-                "problem_index": order_map.get(filename),
-                "problem_name": filename,
-                "compiled": bool(info.get("pass_call")),
-                "correctness": bool(info.get("pass_exe")),
-                "fast_1": bool(info.get("pass_perf")),
-                "metadata": metadata,
-            }
-        )
-
-    for ps in problem_states:
-        if ps.filename in seen_files:
-            continue
-        records.append(
-            {
-                "problem_index": order_map.get(ps.filename),
-                "problem_name": ps.filename,
-                "compiled": False,
-                "correctness": False,
-                "fast_1": False,
-                "metadata": {
-                    "note": "No agentic result generated for this problem",
-                    "iteration": latest_iteration,
-                },
-            }
-        )
-
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    with summary_path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            json.dump(record, handle)
-            handle.write("\n")
-
-    return summary_path, {"records": len(records), "latest_iteration": latest_iteration}
-
-
-def filter_problem_states(problem_states: Iterable[ProblemState], config: "BenchmarkConfig") -> list[ProblemState]:
+def filter_problem_states(problem_states: Iterable["ProblemState"], config: "BenchmarkConfig") -> list["ProblemState"]:
     selected = list(problem_states)
     if config.problems.problem_ids:
         target_ids = {int(pid) for pid in config.problems.problem_ids}
@@ -250,19 +159,262 @@ def build_provider(config: "BenchmarkConfig"):
     return create_provider(provider_config)
 
 
-def derive_output_paths(config: "BenchmarkConfig", provider: str, model_id: str) -> tuple[Path, Path]:
-    outputs_dir = PROJECT_ROOT / "outputs"
-    outputs_dir.mkdir(parents=True, exist_ok=True)
-
+def derive_output_paths(
+    config: "BenchmarkConfig",
+    provider: str,
+    model_id: str,
+    timestamp: datetime | None = None,
+) -> tuple[Path, str, datetime]:
     provider_safe = sanitize_filename(provider)
     model_safe = sanitize_filename(model_id)
-    run_dir = outputs_dir / f"agentic_{provider_safe}_{model_safe}"
+    language_safe = sanitize_filename(config.language or "cuda")
+    timestamp = timestamp or datetime.utcnow()
+    timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
+    run_id = f"{timestamp_str}_{config.mode}_{language_safe}_{provider_safe}_{model_safe}"
+    run_dir = RUNS_ROOT / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir, run_id, timestamp
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    timestamped = run_dir / f"results_{timestamp}.jsonl"
-    latest = run_dir / "results.jsonl"
-    return timestamped, latest
+
+def _problem_dir_name(index: int, filename: str) -> str:
+    problem_id = extract_problem_id(filename)
+    if problem_id is None:
+        problem_id = index
+    problem_token = f"{problem_id:03d}"
+    return f"kernel_{problem_token}_{_kernel_dir_name(filename)}"
+
+
+def _final_code(mem) -> str:
+    candidates = [
+        getattr(mem.ps, "solution", None),
+        getattr(mem, "exe_candidate", None),
+        getattr(mem, "call_candidate", None),
+    ]
+    raw_code = getattr(mem, "raw_code", None)
+    if raw_code and isinstance(raw_code, list) and raw_code:
+        candidates.append(raw_code[0])
+    for candidate in candidates:
+        if candidate:
+            return str(candidate)
+    return ""
+
+
+def _render_history_entry(entry: Dict[str, Any]) -> str:
+    lines: List[str] = []
+    error = entry.get("error")
+    request_text = entry.get("request_text")
+    kwargs_text = entry.get("kwargs_text")
+    response_text = entry.get("response_text")
+
+    if request_text:
+        lines.append("=== REQUEST ===")
+        lines.append(str(request_text))
+    if kwargs_text:
+        lines.append("=== KWARGS ===")
+        lines.append(str(kwargs_text))
+    if response_text:
+        lines.append("=== RESPONSE ===")
+        lines.append(str(response_text))
+    if entry.get("call_pass") is not None:
+        lines.append("=== EXECUTION ===")
+        lines.append(f"call_pass: {entry['call_pass']}")
+        lines.append(f"exe_pass: {entry.get('exe_pass')}")
+        if entry.get("call_stdout"):
+            lines.append("call_stdout:")
+            lines.append(str(entry["call_stdout"]))
+        if entry.get("call_stderr"):
+            lines.append("call_stderr:")
+            lines.append(str(entry["call_stderr"]))
+        if entry.get("exe_stdout"):
+            lines.append("exe_stdout:")
+            lines.append(str(entry["exe_stdout"]))
+        if entry.get("exe_stderr"):
+            lines.append("exe_stderr:")
+            lines.append(str(entry["exe_stderr"]))
+    if entry.get("pass_perf") is not None:
+        lines.append("=== PERFORMANCE ===")
+        lines.append(f"pass_perf: {entry['pass_perf']}")
+        if entry.get("latency_ms") is not None:
+            lines.append(f"latency_ms: {entry['latency_ms']}")
+        if entry.get("efficiency") is not None:
+            lines.append(f"efficiency: {entry['efficiency']}")
+        if entry.get("details"):
+            lines.append(f"details: {entry['details']}")
+    if error:
+        lines.append("=== ERROR ===")
+        lines.append(str(error))
+
+    if not lines:
+        lines.append("(no additional details)")
+
+    return "\n".join(lines) + "\n"
+
+
+def emit_agentic_artifacts(
+    config: "BenchmarkConfig",
+    run_dir: Path,
+    run_id: str,
+    timestamp: datetime,
+    problem_states: Iterable["ProblemState"],
+    memories,
+    iteration_num: int,
+    temperature: float,
+    ancestor_num: int,
+    elapsed_seconds: float,
+) -> Dict[str, Any]:
+    kernel_summaries: List[Dict[str, Any]] = []
+    total = 0
+    call_pass_count = 0
+    exe_pass_count = 0
+    perf_pass_count = 0
+
+    for index, mem in enumerate(memories, start=1):
+        ps = getattr(mem, "ps", None)
+        if ps is None:
+            continue
+
+        total += 1
+        call_pass = bool(getattr(mem, "pass_call", False))
+        exe_pass = bool(getattr(mem, "pass_exe", False))
+        perf_pass = bool(getattr(mem, "pass_perf", False))
+        if call_pass:
+            call_pass_count += 1
+        if exe_pass:
+            exe_pass_count += 1
+        if perf_pass:
+            perf_pass_count += 1
+
+        filename = ps.filename
+        dir_name = _problem_dir_name(index, filename)
+        problem_dir = run_dir / dir_name
+        problem_dir.mkdir(parents=True, exist_ok=True)
+
+        summary_lines = [
+            f"filename: {filename}",
+            f"iterations_requested: {iteration_num}",
+            f"call_pass: {'yes' if call_pass else 'no'}",
+            f"exe_pass: {'yes' if exe_pass else 'no'}",
+            f"perf_pass: {'yes' if perf_pass else 'no'}",
+        ]
+        if getattr(mem, "call_err_msg", None):
+            summary_lines.append(f"call_error: {mem.call_err_msg}")
+        if getattr(mem, "exe_err_msg", None):
+            summary_lines.append(f"exe_error: {mem.exe_err_msg}")
+        if getattr(mem, "ms", None) is not None:
+            summary_lines.append(f"latency_ms: {mem.ms}")
+        if getattr(mem, "efficiency", None) is not None:
+            summary_lines.append(f"efficiency: {mem.efficiency}")
+
+        _write_text(problem_dir / "summary.txt", "\n".join(summary_lines) + "\n")
+
+        instruction = ps.instruction or ""
+        _write_text(problem_dir / "instruction.txt", instruction)
+
+        reference = ps.label or ""
+        _write_text(problem_dir / "reference_solution.py", reference)
+
+        test_code = ps.test_code or ""
+        _write_text(problem_dir / "test_harness.py", test_code)
+
+        final_code = _final_code(mem)
+        _write_text(problem_dir / "final_code.py", final_code)
+
+        raw_candidates = getattr(mem, "raw_code", None)
+        if raw_candidates and isinstance(raw_candidates, list):
+            _write_text(problem_dir / "last_raw_candidate.py", raw_candidates[0] or "")
+
+        _print_formatted_preview(
+            f"[Agentic] Formatted output for {problem_dir.name}",
+            problem_dir / "final_code.py",
+            problem_dir,
+        )
+
+        history_entries = getattr(mem, "history", []) or []
+        stage_counts: Dict[tuple[int, str], int] = {}
+        for entry in history_entries:
+            iteration = int(entry.get("iteration", 0))
+            stage = str(entry.get("stage", "stage"))
+            key = (iteration, stage)
+            stage_counts[key] = stage_counts.get(key, 0) + 1
+            suffix = stage_counts[key] - 1
+            file_name = stage if suffix == 0 else f"{stage}_{suffix}"
+            history_dir = problem_dir / "history" / f"iteration_{iteration:02d}"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            stage_path = history_dir / f"{file_name}.txt"
+            _write_text(stage_path, _render_history_entry(entry))
+
+        kernel_summaries.append(
+            {
+                "filename": filename,
+                "path": problem_dir.relative_to(run_dir).as_posix(),
+                "call_pass": call_pass,
+                "exe_pass": exe_pass,
+                "perf_pass": perf_pass,
+                "latency_ms": getattr(mem, "ms", None),
+                "efficiency": getattr(mem, "efficiency", None),
+                "iterations": iteration_num,
+            }
+        )
+
+    metrics_bundle = {
+        "total": total,
+        "compiled_count": call_pass_count,
+        "correct_count": exe_pass_count,
+        "performance_count": perf_pass_count,
+        "compilation_rate": round((call_pass_count / total) * 100, 3) if total else 0.0,
+        "correctness_rate": round((exe_pass_count / call_pass_count) * 100, 3)
+        if call_pass_count
+        else 0.0,
+        "performance_rate": round((perf_pass_count / exe_pass_count) * 100, 3)
+        if exe_pass_count
+        else 0.0,
+    }
+
+    environment: Dict[str, Any] | None = None
+    hw = getattr(config, "hardware", None)
+    if hw:
+        environment = {
+            "hardware": {
+                "gpu_architecture": getattr(hw, "gpu_architecture", None),
+                "gpu_id": getattr(hw, "gpu_id", None),
+            }
+        }
+
+    manifest = {
+        "run_id": run_id,
+        "timestamp": timestamp.replace(microsecond=0).isoformat() + "Z",
+        "mode": config.mode,
+        "language": config.language,
+        "provider": config.provider,
+        "model": config.generator_model,
+        "elapsed_seconds": elapsed_seconds,
+        "settings": {
+            "num_runs": config.num_runs,
+            "iterations": iteration_num,
+            "temperature": temperature,
+            "ancestor_num": ancestor_num,
+            "formatter": {
+                "provider": getattr(config, "formatter_provider", DEFAULT_FORMATTER_PROVIDER),
+                "model": getattr(config, "formatter_model", DEFAULT_FORMATTER_MODEL),
+            },
+        },
+        "environment": environment,
+        "kernels": kernel_summaries,
+    }
+
+    manifest_path = run_dir / "manifest.yaml"
+    _write_yaml(manifest_path, manifest)
+
+    print(
+        f"[Agentic] Completed run for {total} problem(s) in {elapsed_seconds:.1f}s. Results saved to {manifest_path}"
+    )
+
+    return {
+        "run_dir": str(run_dir),
+        "manifest": str(manifest_path),
+        "metrics": metrics_bundle,
+        "elapsed_seconds": elapsed_seconds,
+    }
 
 
 def run(config: "BenchmarkConfig") -> None:
@@ -302,17 +454,22 @@ def run(config: "BenchmarkConfig") -> None:
         mem_file=None,
     )
 
-    output_path, latest_output_path = derive_output_paths(
-        config, provider_wrapper.config.provider, provider_wrapper.config.model
+    run_timestamp = datetime.utcnow()
+    run_dir, run_id, timestamp_obj = derive_output_paths(
+        config,
+        provider_wrapper.config.provider,
+        provider_wrapper.config.model,
+        timestamp=run_timestamp,
     )
 
     temperature = 0.0
     iteration_num = max(1, int(config.agentic.max_optimization_cycles))
     ancestor_num = max(1, int(config.agentic.max_debug_attempts))
 
-    print("[Agentic] Writing results to", output_path)
+    run_start = perf_counter()
+
     agent.run(
-        output_path=str(output_path),
+        output_path=None,
         multi_thread=True,
         datalen=selected_count,
         iteration_num=iteration_num,
@@ -321,31 +478,19 @@ def run(config: "BenchmarkConfig") -> None:
         gpu_id=config.hardware.gpu_id,
     )
 
-    print("[Agentic] Completed agentic benchmark run")
+    elapsed_seconds = round(perf_counter() - run_start, 1)
 
-    summary_path, summary_stats = build_agentic_summary(
-        latest_output_path.parent,
-        output_path,
+    artifacts = emit_agentic_artifacts(
+        config,
+        run_dir,
+        run_id,
+        timestamp_obj,
         dataset.problem_states,
+        agent.memories,
+        iteration_num,
+        temperature,
+        ancestor_num,
+        elapsed_seconds,
     )
 
-    if summary_stats.get("records"):
-        print(
-            f"[Agentic] Aggregated {summary_stats['records']} problem(s) from iteration {summary_stats['latest_iteration']}."
-        )
-
-    if summary_path.exists() and output_path != summary_path:
-        try:
-            shutil.copy2(summary_path, output_path)
-        except Exception as exc:
-            print(
-                f"[Agentic] Warning: failed to persist timestamped summary at {output_path}: {exc}"
-            )
-
-    resolved_results = summary_path
-
-    return {
-        "results_path": str(resolved_results),
-        "timestamped_path": str(output_path),
-        "run_dir": str(latest_output_path.parent),
-    }
+    return artifacts

@@ -1,4 +1,4 @@
-description: Unified benchmark config covering Google, Anthropic, OpenAI, and OpenRouter models.
+description: Single-provider benchmark using Groq moonshotai/kimi-k2-instruct-0905 across raw & agentic modes.
 
 modes:
   - raw
@@ -9,24 +9,6 @@ languages:
   - triton
 
 models:
-  - provider: gemini
-    model: gemini-2.5-pro
-  - provider: gemini
-    model: gemini-2.5-flash
-  - provider: anthropic
-    model: claude-sonnet-4-5
-  - provider: anthropic
-    model: claude-haiku-4-5
-  - provider: openai
-    model: gpt-5
-  - provider: openrouter
-    model: z-ai/glm-4.6
-  - provider: xai
-    model: grok-code-fast-1
-  - provider: xai
-    model: grok-4-fast-reasoning
-  - provider: xai
-    model: grok-4-0709
   - provider: groq
     model: moonshotai/kimi-k2-instruct-0905
 
@@ -62,4 +44,4 @@ artifacts:
   plots_dir: plots
 
 visualization:
-  enabled: true
+  enabled: false

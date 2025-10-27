@@ -15,11 +15,15 @@ from typing import Any, Dict, List, Tuple
 import yaml
 
 from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig
-from metrics import compute_core_metrics, load_metrics, parse_jsonl_results, save_metrics
+from metrics import load_metrics, save_metrics
 from providers import verify_model_responds_hello
 
 GREEN = "\033[32m"
 RESET = "\033[0m"
+HOST_CPU_COUNT = max(1, os.cpu_count() or 1)
+
+DEFAULT_FORMATTER_PROVIDER = "groq"
+DEFAULT_FORMATTER_MODEL = "moonshotai/kimi-k2-instruct-0905"
 
 
 def load_yaml_config(yaml_path: str | Path) -> Dict[str, Any]:
@@ -30,6 +34,28 @@ def load_yaml_config(yaml_path: str | Path) -> Dict[str, Any]:
 
 def sanitize_component(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
+
+
+def _resolve_cpu_concurrency(value: object | None) -> int:
+    """Coerce CPU worker counts, honoring the 'max' sentinel."""
+    if value is None:
+        return HOST_CPU_COUNT
+    if isinstance(value, str):
+        if value.strip().lower() == "max":
+            return HOST_CPU_COUNT
+        raise ValueError(f"Unsupported cpu concurrency token: {value}")
+    return max(1, int(value))
+
+
+def _resolve_max_jobs(value: object | None) -> int:
+    """Allow YAML to specify 'max' for job fan-out."""
+    if isinstance(value, str):
+        if value.strip().lower() == "max":
+            return HOST_CPU_COUNT
+        raise ValueError(f"Unsupported max_jobs token: {value}")
+    if value is None:
+        return HOST_CPU_COUNT
+    return max(1, int(value))
 
 
 def expand_run_matrix(yaml_data: Dict[str, Any]) -> List[Tuple[str, str, Dict[str, Any]]]:
@@ -147,11 +173,11 @@ def _resolve_agentic(yaml_data: Dict[str, Any], overrides: Dict[str, Any]) -> Ag
         ),
         "reflector_model": ag_data.get(
             "reflector_model",
-            ag_defaults.get("reflector_model", "gpt-4-turbo"),
+            ag_defaults.get("reflector_model"),
         ),
         "optimizer_model": ag_data.get(
             "optimizer_model",
-            ag_defaults.get("optimizer_model", "gpt-4-turbo"),
+            ag_defaults.get("optimizer_model"),
         ),
     }
 
@@ -175,20 +201,23 @@ def yaml_to_benchmark_config(
     provider = model_entry.get("provider") or yaml_data.get("provider", "openai")
     model_id = model_entry.get("model") or yaml_data.get("generator_model", "gpt-4-turbo")
     base_url = model_entry.get("base_url") or yaml_data.get("provider_base_url")
+
     formatter_defaults = defaults.get("formatter", {})
-    formatter_cfg = model_entry.get("formatter", {})
-    formatter_provider = formatter_cfg.get(
-        "provider",
-        yaml_data.get("formatter_provider", formatter_defaults.get("provider")),
-    )
-    formatter_model = formatter_cfg.get(
-        "model",
-        yaml_data.get("formatter_model", formatter_defaults.get("model")),
-    )
-    formatter_base_url = formatter_cfg.get(
-        "base_url",
-        yaml_data.get("formatter_base_url", formatter_defaults.get("base_url")),
-    )
+    formatter_cfg = model_entry.get("formatter") or {}
+    if not isinstance(formatter_cfg, dict):
+        formatter_cfg = {}
+
+    formatter_provider = formatter_cfg.get("provider") or yaml_data.get("formatter_provider")
+    if not formatter_provider:
+        formatter_provider = formatter_defaults.get("provider") or DEFAULT_FORMATTER_PROVIDER
+
+    formatter_model = formatter_cfg.get("model") or yaml_data.get("formatter_model")
+    if not formatter_model:
+        formatter_model = formatter_defaults.get("model") or DEFAULT_FORMATTER_MODEL
+
+    formatter_base_url = formatter_cfg.get("base_url") or yaml_data.get("formatter_base_url")
+    if not formatter_base_url:
+        formatter_base_url = formatter_defaults.get("base_url")
 
     num_runs = model_entry.get("num_runs", yaml_data.get("num_runs", defaults.get("num_runs")))
     if "num_runs" in cli_overrides:
@@ -200,18 +229,34 @@ def yaml_to_benchmark_config(
     if cli_overrides.get("profile_stages") is True:
         profile_stages = True
 
-    raw_concurrency = model_entry.get(
-        "raw_concurrency",
-        yaml_data.get("raw_concurrency", raw_defaults.get("cpu_concurrency", 8)),
-    )
-    raw_gpu_concurrency = model_entry.get(
-        "raw_gpu_concurrency",
-        yaml_data.get("raw_gpu_concurrency", raw_defaults.get("gpu_concurrency", 1)),
-    )
-    raw_max_jobs = model_entry.get(
-        "raw_max_jobs",
-        yaml_data.get("raw_max_jobs", raw_defaults.get("max_jobs", 8)),
-    )
+    raw_settings = yaml_data.get("raw", {}) or {}
+
+    raw_concurrency = cli_overrides.get("raw_concurrency")
+    if raw_concurrency is None:
+        raw_concurrency = yaml_data.get("raw_concurrency")
+    if raw_concurrency is None:
+        raw_concurrency = raw_settings.get("cpu_concurrency")
+    if raw_concurrency is None:
+        raw_concurrency = raw_defaults.get("cpu_concurrency")
+    raw_concurrency = _resolve_cpu_concurrency(raw_concurrency)
+
+    raw_gpu_concurrency = cli_overrides.get("raw_gpu_concurrency")
+    if raw_gpu_concurrency is None:
+        raw_gpu_concurrency = yaml_data.get("raw_gpu_concurrency")
+    if raw_gpu_concurrency is None:
+        raw_gpu_concurrency = raw_settings.get("gpu_concurrency")
+    if raw_gpu_concurrency is None:
+        raw_gpu_concurrency = raw_defaults.get("gpu_concurrency", 1)
+    raw_gpu_concurrency = int(raw_gpu_concurrency)
+
+    raw_max_jobs = cli_overrides.get("raw_max_jobs")
+    if raw_max_jobs is None:
+        raw_max_jobs = yaml_data.get("raw_max_jobs")
+    if raw_max_jobs is None:
+        raw_max_jobs = raw_settings.get("max_jobs")
+    if raw_max_jobs is None:
+        raw_max_jobs = raw_defaults.get("max_jobs")
+    raw_max_jobs = _resolve_max_jobs(raw_max_jobs)
 
     generation_max_tokens = model_entry.get("generation_max_tokens")
     if generation_max_tokens is None:
@@ -251,7 +296,7 @@ def yaml_to_benchmark_config(
         formatter_model=formatter_model,
         formatter_base_url=formatter_base_url,
         generator_model=model_id,
-        verbose=yaml_data.get("verbose", False),
+        verbose=False,
         num_runs=num_runs,
         profile_stages=profile_stages,
         hardware=hardware,
@@ -269,6 +314,10 @@ def yaml_to_benchmark_config(
         config_kwargs["formatter_max_tokens"] = formatter_max_tokens
 
     config = BenchmarkConfig(**config_kwargs)
+
+    if config.agentic:
+        config.agentic.reflector_model = config.generator_model
+        config.agentic.optimizer_model = config.generator_model
 
     return config
 
@@ -292,28 +341,20 @@ def json_cache_path(
     filename = f"{mode_safe}_{language_safe}_{provider_safe}_{model_safe}.json"
     return json_dir / filename
 
-
-def collect_metrics(results_path: Path) -> Dict[str, Any]:
-    records = parse_jsonl_results(results_path)
-    metrics = compute_core_metrics(records)
-    return {
-        "metrics": metrics,
-        "total_records": len(records),
-    }
-
-
 def _run_and_collect(
     config: BenchmarkConfig,
     run_fn,
 ) -> Dict[str, Any]:
     run_artifacts = run_fn(config) or {}
-    results_path = run_artifacts.get("results_path")
-    if results_path is None:
-        raise RuntimeError("Runner did not return a results_path."
+    run_dir = run_artifacts.get("run_dir")
+    if run_dir is None:
+        raise RuntimeError("Runner did not return a run directory."
                            " Ensure run(config) returns artifact metadata.")
     return {
-        "results_path": Path(results_path),
-        "run_dir": Path(run_artifacts.get("run_dir", Path(results_path).parent)),
+        "run_dir": Path(run_dir),
+        "manifest": Path(run_artifacts.get("manifest", Path(run_dir) / "manifest.yaml")),
+        "metrics": run_artifacts.get("metrics", {}),
+        "elapsed_seconds": run_artifacts.get("elapsed_seconds"),
     }
 
 
@@ -349,6 +390,18 @@ def run_batch_benchmark(
 
     results: List[Dict[str, Any]] = []
 
+    mode_priority = {"raw": 0, "agentic": 1}
+    language_priority = {"cuda": 0, "triton": 1}
+
+    def _sort_key(entry: tuple[str, str, Dict[str, Any]]) -> tuple[int, int, str, str]:
+        mode_key = mode_priority.get(entry[0], 99)
+        language_key = language_priority.get(entry[1], 99)
+        provider = str(entry[2].get("provider", ""))
+        model = str(entry[2].get("model", ""))
+        return (mode_key, language_key, provider, model)
+
+    run_plan.sort(key=_sort_key)
+
     for index, (mode, language, model_entry) in enumerate(run_plan, start=1):
         provider = model_entry.get("provider", yaml_data.get("provider", "unknown"))
         model_id = model_entry.get("model", yaml_data.get("generator_model", "unknown"))
@@ -363,6 +416,7 @@ def run_batch_benchmark(
 
         if cached_payload and cached_payload.get("config_fingerprint") == fingerprint:
             metrics = cached_payload.get("metrics", {})
+            artifacts = cached_payload.get("artifacts", {})
             print("  ↪ Using cached metrics (config fingerprint match).")
             results.append({
                 "provider": provider,
@@ -372,9 +426,10 @@ def run_batch_benchmark(
                 "status": "cached",
                 "metrics": metrics,
                 "metrics_path": str(cache_path),
-                "results_path": cached_payload.get("artifacts", {}).get("results_jsonl"),
+                "artifacts": artifacts,
                 "timestamp": cached_payload.get("timestamp"),
                 "config_fingerprint": fingerprint,
+                "elapsed_seconds": cached_payload.get("elapsed_seconds"),
             })
             print(f"✅ Cached: {provider}/{model_id}\n")
             continue
@@ -388,19 +443,20 @@ def run_batch_benchmark(
             else:
                 raise ValueError(f"Unsupported mode '{mode}' in run matrix.")
 
-            metrics_bundle = collect_metrics(artifact_info["results_path"])
+            metrics_bundle = artifact_info.get("metrics", {})
             payload = {
                 "provider": provider,
                 "model": model_id,
                 "mode": mode,
                 "language": language,
                 "timestamp": datetime.now().isoformat(),
-                "metrics": metrics_bundle["metrics"],
+                "metrics": metrics_bundle,
                 "config_fingerprint": fingerprint,
                 "artifacts": {
-                    "results_jsonl": str(artifact_info["results_path"]),
+                    "manifest": str(artifact_info.get("manifest")),
                     "run_dir": str(artifact_info["run_dir"]),
                 },
+                "elapsed_seconds": artifact_info.get("elapsed_seconds"),
             }
             save_metrics(cache_path, payload)
 

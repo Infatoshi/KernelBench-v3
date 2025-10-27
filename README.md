@@ -42,8 +42,8 @@ KernelBench-v3/
 ├── data/TritonBench/        # TritonBench dataset & metrics (copied in repo)
 ├── json/                    # Cached aggregate metrics per mode/language/model
 ├── plots/                   # Visualization artifacts (PNG only)
-├── outputs/                 # Agentic run outputs (raw JSONL traces)
-├── runs/                    # Raw run outputs (per-problem JSONL)
+├── outputs/                 # Legacy agentic outputs (JSONL, kept for back-compat)
+├── runs/                    # Raw & agentic run artifacts (manifests + per-problem logs)
 ├── scripts/                 # Legacy scripts (generate, eval, analysis)
 ├── src/
 │   ├── providers/           # Provider wrappers (OpenAI, Groq, etc.)
@@ -67,6 +67,15 @@ cd /home/infatoshi/gpu_benchmarks/KernelBench-v3
 ```
 
 ### 2. Automated Setup & Smoke Test
+
+The repository is now an [uv](https://github.com/astral-sh/uv) project. After cloning you can bring up a fresh environment with:
+
+```bash
+uv sync
+source .venv/bin/activate
+```
+
+This creates `.venv` and installs every dependency declared in `pyproject.toml`.
 ```bash
 bash setup_and_test.sh
 ```
@@ -85,7 +94,25 @@ export GROQ_API_KEY="your-groq-key"  # required for smoke tests & Groq runs
 # export GEMINI_API_KEY="your-gemini-key"
 ```
 
-Formatter overrides (beta) are configured via CLI/YAML—see [Formatter Beta](#formatter-beta-optional).
+Formatter overrides are configured via CLI/YAML—see [Formatter (Always On)](#formatter-always-on).
+
+### Modal Raw GPU Runs (Experimental)
+
+Modal orchestration currently supports **raw kernels only**; the agentic pipeline remains offline to avoid runaway GPU costs.
+
+#### Quickstart
+
+```bash
+git clone https://github.com/Infatoshi/KernelBench-v3.git && cd KernelBench-v3
+bash setup.sh
+bash run.sh
+```
+
+`setup.sh` installs `uv`, synchronizes the project environment, and prompts you to create a Modal token via `modal token new`. `run.sh` submits the Modal job (`tools/modal_raw.py`) that provisions the CUDA image, syncs the repo in a writable workspace, and launches the raw benchmark.
+
+Configuration lives in `configs/modal_raw.yaml`. Adjust the `modal.image` block to change the CUDA version or Ubuntu tag (`ubuntu24.04` by default), and update `modal.gpu.name` to target a different GPU tier. The default subprocess timeout is 120 seconds; set `MODAL_RUN_TIMEOUT=0` and `modal.timeouts.process_seconds: 0` if you need to disable the safeguard.
+
+`run.sh` forwards `GROQ_API_KEY` to Modal automatically when the variable is set locally; the task logs whether the secret was attached before submitting the job. If Modal credentials are missing, the script aborts with instructions to rerun `uv run modal token new`.
 
 ---
 
@@ -114,39 +141,76 @@ BenchmarkConfig(
 
 You can modify defaults directly or override via CLI flags.
 
-### Formatter Beta (Optional)
+### Formatter (Always On)
 
-- Enable the Groq-based formatter on the CLI with `--groq-formatter-beta`, or provide explicit overrides:
-  - `--formatter-provider groq`
-  - `--formatter-model moonshotai/kimi-k2-instruct-0905`
-  - `--formatter-base-url https://api.groq.com/openai/v1`
-- YAML configs support a `formatter` block on each model:
+- The Groq formatter now runs for every generation—there is no concise/disabled mode.
+- Override provider/model globally via CLI (`--formatter-provider`, `--formatter-model`, `--formatter-base-url`) or YAML defaults:
 
   ```yaml
   defaults:
     formatter:
       provider: groq
       model: moonshotai/kimi-k2-instruct-0905
-  models:
-    - provider: openai
-      model: gpt-5
-      formatter:
-        provider: groq
-        model: moonshotai/kimi-k2-instruct-0905
+      base_url: https://api.groq.com/openai/v1
   ```
+
+- Per-model overrides remain available, but leaving them unset inherits the global defaults so that every kernel gets a formatted candidate.
 
 The formatter performs a second LLM pass to enforce a single fenced `python` block containing a complete `ModelNew` implementation, complementing the stricter CUDA/Triton prompts in `src/prompt_constructor.py`.
 
 ### Raw Concurrency
 
-- Raw runs now parallelize LLM prompting and compilation prep across multiple CPU workers (default: 8) that feed a shared GPU evaluation queue.
-- Override CPU fan-out via YAML (`raw_concurrency: 4`).
-- Tune GPU queue throughput with `raw_gpu_concurrency` (default 1 consumer thread) if the device has headroom.
+- Raw runs now parallelize LLM prompting and compilation prep across as many CPU workers as your host exposes (default equals `os.cpu_count()`), feeding a shared GPU evaluation queue.
+- Override CPU fan-out globally via YAML with `raw_concurrency: max` (default) or any explicit integer; CLI overrides accept the same token.
+- `raw.max_jobs` follows the same convention, defaulting to the CPU thread count so job queues never bottleneck below available workers.
+- Tune GPU queue throughput with `raw_gpu_concurrency` (default 2 consumer threads) if the device has headroom.
 - Set both to `1` for fully sequential debugging, or raise CPU workers while keeping GPU slots low to overlap compilation with execution.
 
 Performance profiling is disabled by default (no GPU timing trials). Re-enable it per run with `fast_p_threshold: 1.2` or via CLI `--fast-p-threshold 1.2` if you need speedup metrics.
 
 Stage profiling (CPU prep, queue wait, GPU compile/correctness/perf) is off by default. Enable with `profile_stages: true` in YAML or `--profile-stages` on the CLI to capture per-problem timing breakdowns in the raw results.
+
+---
+
+## 📦 Run Artifact Layout
+
+Every invocation now writes a single directory under `runs/` with a timestamped slug:
+
+```
+runs/
+  20251025_012633_agentic_triton_openai_gpt-5/
+    manifest.yaml
+    kernel_001_context_attn_nopad.py/
+      summary.txt
+      instruction.txt
+      reference_solution.py
+      test_harness.py
+      final_code.py
+      last_raw_candidate.py
+      history/
+        iteration_00/solution.txt
+        iteration_00/execution.txt
+        iteration_00/performance.txt
+        iteration_00/reflection.txt
+        iteration_01/...
+    kernel_002_...
+```
+
+- **manifest.yaml** captures provider/model metadata, concurrency settings, formatter configuration, and a per-kernel summary (call/exec/perf pass flags and runtime hints).
+- The manifest also records `elapsed_seconds` (wall-clock runtime rounded to 0.1s) so you can compare how long each provider/model/problem sweep took.
+- **summary.txt** highlights the outcome for the kernel along with any errors.
+- **history/** holds plain-text logs for each iteration and stage. Requests, kwargs, responses, execution stdout/stderr, and performance diagnostics are all written without JSON so you can skim directly in the terminal.
+- Raw runs emit the same structure, with `prompt.txt`, `response_raw.txt`, `response_formatted.txt`, and `metrics.yaml` mirroring the agentic history.
+
+Legacy JSONL traces remain untouched inside `outputs/` for backwards compatibility with older analysis scripts, but new tooling should rely on the `runs/` layout.
+
+### Logging
+
+- Verbose mode is always enabled. Batch runner headers render as `mode + language + provider/model` in green, and no concise mode is exposed.
+- Raw and agentic runners dump every LLM exchange in plain text—system prompts, user prompts, kwargs, and responses—without JSON framing so the terminal output stays readable.
+- Agentic iterations record the same information under each kernel's `history/` folder for offline inspection.
+- To keep the console manageable, LLM prompts/responses and formatted kernels are truncated to head/tail slices with an ellipsis and a loud error banner is emitted whenever a stage fails.
+- Agentic runs reuse the evaluated provider/model for every phase (generation, optimizer, reflection) so metrics reflect that single LLM end-to-end.
 
 ---
 
@@ -211,8 +275,7 @@ For quick one-off tests:
 ```bash
 uv run python eval.py --mode raw \
   --provider groq \
-  --model llama-3.3-70b-versatile \
-  --num-runs 5
+  --model llama-3.3-70b-versatile
 ```
 
 ### Examples
@@ -446,8 +509,7 @@ problems:
 agentic:                     # Only used if mode=agentic
   max_debug_attempts: 3
   max_optimization_cycles: 2
-  reflector_model: gpt-4-turbo
-  optimizer_model: gpt-4-turbo
+  # reflector_model and optimizer_model automatically reuse the generator model.
 
 fast_p_threshold: 1.2        # Speedup threshold
 
@@ -477,6 +539,8 @@ visualization:
 | Config | Description | Models | Problems |
 |--------|-------------|--------|----------|
 | `quick_test.yaml` | Single model, 3 problems | Groq Llama | 3 |
+| `test_providers.yaml` | Multi-provider smoke test | 8 models | 1 |
+| `only_kimi.yaml` | Kimi K2 across all modes/languages | 1 model | full |
 | `test_visualization.yaml` | Two models for viz testing | 2× Groq | 2 |
 | `example_batch.yaml` | Full multi-provider comparison | 5 models | 10 |
 | `multi_provider_benchmark.yaml` | Production benchmark | 6 models | 20 |
@@ -497,7 +561,7 @@ Outputs saved to `visualizations/` as PNG/PDF with timestamp.
 Run this command (preflight + benchmark) once your API keys are exported:
 
 ```bash
-uv run python eval.py --config configs/test_visualization.yaml --num-runs 1 --profile-stages --verbose --groq-formatter-beta
+uv run python eval.py --config configs/test_visualization.yaml --profile-stages --verbose
 ```
 
 > The entrypoint automatically pings each provider/model with a "Hello." request before starting the benchmark and aborts if any credentials or model names are misconfigured.
@@ -557,4 +621,3 @@ MIT License (see `LICENSE`).
 - KernelBench-v2 (kernelbench-v1 + triton)
 - MultiKernelBench (i dont have the hardware yet… so pause)
 - TritonBench (covered in geak-eval and kernelbench-v2)
-
