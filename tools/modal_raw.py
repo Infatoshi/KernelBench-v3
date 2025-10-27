@@ -19,7 +19,10 @@ if str(SRC_DIR) not in sys.path:
 
 from modal_support.config import ModalRawConfig
 
-CONFIG_PATH = REPO_ROOT / "configs" / "modal_raw.yaml"
+CONFIG_ENV = os.environ.get("KB3_MODAL_CONFIG_PATH", "configs/modal_raw.yaml")
+CONFIG_PATH = Path(CONFIG_ENV)
+if not CONFIG_PATH.is_absolute():
+    CONFIG_PATH = REPO_ROOT / CONFIG_PATH
 MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
 TIMEOUT = MODAL_CONFIG.timeouts.process_seconds
 _GROQ_SECRET_ATTACHED = False

@@ -40,10 +40,13 @@ KernelBench-v3/
 ├── config.py                # Global configuration dataclasses & defaults
 ├── eval.py                  # Unified entry point for raw/agentic runs
 ├── data/TritonBench/        # TritonBench dataset & metrics (copied in repo)
-├── json/                    # Cached aggregate metrics per mode/language/model
-├── plots/                   # Visualization artifacts (PNG only)
-├── outputs/                 # Legacy agentic outputs (JSONL, kept for back-compat)
-├── runs/                    # Raw & agentic run artifacts (manifests + per-problem logs)
+├── output/                  # Generated artifacts (created after running benchmarks)
+│   ├── json/                # Cached aggregate metrics per mode/language/model
+│   ├── logs/                # Batch runner and helper script logs
+│   ├── plots/               # Visualization artifacts (PNG only)
+│   ├── runs/                # Raw & agentic run artifacts (manifests + per-problem logs)
+│   ├── timing/              # Optional baseline timing references
+│   └── tmp/                 # Scratch space for perf/scripts
 ├── scripts/                 # Legacy scripts (generate, eval, analysis)
 ├── src/
 │   ├── providers/           # Provider wrappers (OpenAI, Groq, etc.)
@@ -76,12 +79,6 @@ source .venv/bin/activate
 ```
 
 This creates `.venv` and installs every dependency declared in `pyproject.toml`.
-```bash
-bash setup_and_test.sh
-```
-
-> The script installs `uv` if missing, creates `.venv`, installs dependencies, validates CUDA availability, checks `GROQ_API_KEY`, and runs raw/agentic smoke tests with Groq `moonshotai/kimi-k2-instruct-0905`.
-
 ### 3. Manual Environment Setup (Optional)
 
 > Alternatively, use Conda/Pip to install dependencies.
@@ -104,15 +101,12 @@ Modal orchestration currently supports **raw kernels only**; the agentic pipelin
 
 ```bash
 git clone https://github.com/Infatoshi/KernelBench-v3.git && cd KernelBench-v3
-bash setup.sh
-bash run.sh
+bash setup_and_run.sh configs/modal_raw.yaml
 ```
 
-`setup.sh` installs `uv`, synchronizes the project environment, and prompts you to create a Modal token via `modal token new`. `run.sh` submits the Modal job (`tools/modal_raw.py`) that provisions the CUDA image, syncs the repo in a writable workspace, and launches the raw benchmark.
+`setup_and_run.sh` ensures `uv` is installed, syncs dependencies, prompts for a Modal token if one isn’t present, and then launches the Modal job (`tools/modal_raw.py`) using the config you supply. Point it at a different YAML whenever you want to run another matrix.
 
-Configuration lives in `configs/modal_raw.yaml`. Adjust the `modal.image` block to change the CUDA version or Ubuntu tag (`ubuntu24.04` by default), and update `modal.gpu.name` to target a different GPU tier. The default subprocess timeout is 120 seconds; set `MODAL_RUN_TIMEOUT=0` and `modal.timeouts.process_seconds: 0` if you need to disable the safeguard.
-
-`run.sh` forwards `GROQ_API_KEY` to Modal automatically when the variable is set locally; the task logs whether the secret was attached before submitting the job. If Modal credentials are missing, the script aborts with instructions to rerun `uv run modal token new`.
+Configuration lives in `configs/modal_raw.yaml`. Adjust the `modal.image` block to change the CUDA version or Ubuntu tag (`ubuntu24.04` by default), and update `modal.gpu.name` to target a different GPU tier.
 
 ---
 
@@ -174,10 +168,10 @@ Stage profiling (CPU prep, queue wait, GPU compile/correctness/perf) is off by d
 
 ## 📦 Run Artifact Layout
 
-Every invocation now writes a single directory under `runs/` with a timestamped slug:
+Every invocation now writes a single directory under `output/runs/` with a timestamped slug:
 
 ```
-runs/
+output/runs/
   20251025_012633_agentic_triton_openai_gpt-5/
     manifest.yaml
     kernel_001_context_attn_nopad.py/
@@ -202,7 +196,7 @@ runs/
 - **history/** holds plain-text logs for each iteration and stage. Requests, kwargs, responses, execution stdout/stderr, and performance diagnostics are all written without JSON so you can skim directly in the terminal.
 - Raw runs emit the same structure, with `prompt.txt`, `response_raw.txt`, `response_formatted.txt`, and `metrics.yaml` mirroring the agentic history.
 
-Legacy JSONL traces remain untouched inside `outputs/` for backwards compatibility with older analysis scripts, but new tooling should rely on the `runs/` layout.
+# Legacy JSONL traces remain alongside each manifest under `output/runs/` for backwards compatibility with older analysis scripts, but new tooling should rely on the structured layout.
 
 ### Logging
 
@@ -322,10 +316,10 @@ uv run python eval.py --config configs/agentic_batch.yaml
 ```
 
 ### Output Locations
-- **Raw mode**: `runs/raw_{language}_{provider}_{model}/results.jsonl`
-- **Agentic mode**: `outputs/agentic_{provider}_{model}/results.jsonl`
-- **Batch summary**: `json/batch_summary_{timestamp}.json`
-- **Visualizations**: `plots/benchmark_{metric}_{timestamp}.png`
+- **Raw mode**: `output/runs/raw_{language}_{provider}_{model}/results.jsonl`
+- **Agentic mode**: `output/runs/agentic_{provider}_{model}/results.jsonl`
+- **Batch summary**: `output/json/batch_summary_{timestamp}.json`
+- **Visualizations**: `output/plots/benchmark_{metric}_{timestamp}.png`
 
 ---
 
@@ -380,7 +374,7 @@ Key functions:
 2. Construct prompt using `prompt_constructor`.
 3. Call provider to generate kernel code.
 4. Evaluate compiled kernel vs reference; record metadata.
-5. Write output JSONL to `runs/<provider_model_timestamp>.jsonl`.
+5. Write output JSONL to `output/runs/<provider_model_timestamp>.jsonl`.
 
 ### Agentic Runner Steps
 1. Load `TritonBench` JSON (instructions + reference metadata).
@@ -388,7 +382,7 @@ Key functions:
 3. Spin up provider wrapper + `OptimAgent`.
 4. Iterate: generate candidate → test on GPU → reflect/update memory.
 5. Optionally run performance evaluation (TritonBench harness).
-6. Write output JSONL to `outputs/<provider_model_timestamp>.jsonl`.
+6. Write output JSONL to `output/runs/<provider_model_timestamp>.jsonl`.
 
 ---
 
@@ -399,7 +393,6 @@ Key functions:
 - **Dedicated Cache**: Build directory for Triton kernels (`TRITON_CACHE_DIR`).
 - **Error Handling**: Specific categories for JIT/autotuning/source inspection issues.
 - **Cleanup**: Remove temporary modules/files, clear CUDA caches after evaluation.
-- **Docker Support**: Ready for `--gpus all` environments.
 
 ### Quick Triton Evaluation Example
 ```bash
@@ -480,13 +473,13 @@ cat configs/multi_provider_benchmark.yaml
 uv run python eval.py --config configs/multi_provider_benchmark.yaml
 
 # 3. Results automatically saved and visualized:
-#    - runs/raw_{language}_{provider}_{model}/results.jsonl (per raw run)
-#    - outputs/agentic_{provider}_{model}/results.jsonl (per agentic run)
-#    - json/batch_summary_{timestamp}.json (aggregate metadata)
-#    - plots/benchmark_{metric}_{timestamp}.png (one file per metric)
+#    - output/runs/raw_{language}_{provider}_{model}/results.jsonl (per raw run)
+#    - output/runs/agentic_{provider}_{model}/results.jsonl (per agentic run)
+#    - output/json/batch_summary_{timestamp}.json (aggregate metadata)
+#    - output/plots/benchmark_{metric}_{timestamp}.png (one file per metric)
 ```
 
-> Tip: successful runs cache aggregate metrics in `json/`. Subsequent executions reuse the cache when the configuration fingerprint matches; delete the relevant JSON file to force a fresh evaluation.
+> Tip: successful runs cache aggregate metrics in `output/json/`. Subsequent executions reuse the cache when the configuration fingerprint matches; delete the relevant JSON file to force a fresh evaluation.
 
 ### YAML Configuration Schema
 
@@ -584,7 +577,7 @@ python scripts/verify_bench.py
 | "could not get source code" (Triton) | Use builtin loader (`load_custom_model_triton`); ensure `triton` installed |
 | Provider 401/403 | Confirm provider-specific API keys (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) |
 | CUDA compilation noise | Run without `--verbose` (raw mode suppresses Ninja output by default) |
-| Performance evaluation errors | Check `data/TritonBench/performance_metrics/` availability; inspect logs in `outputs/` |
+| Performance evaluation errors | Check `data/TritonBench/performance_metrics/` availability; inspect logs in `output/logs/` |
 
 ---
 

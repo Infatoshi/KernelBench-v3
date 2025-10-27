@@ -62,7 +62,7 @@
 
 ### 8. Post-Run Artifacts
 1. Collect `json/batch_summary_*.json`, per-run `manifest.yaml`, and `plots/benchmark_*.png`.
-2. Archive results with timestamp (e.g., move to `results/tritonbench_full/YYYYMMDD`).
+2. Archive results with timestamp (e.g., move to `output/timing/tritonbench_full/YYYYMMDD`).
 3. Update README and PROVE.md with findings (success rates, notable issues).
 
 ### 9. Maintenance
@@ -79,4 +79,3 @@
 - Should we parameterize problem subsets (difficulty tiers) for targeted benchmarking?
 - Do we want automated reporting (HTML dashboards) once plots are generated?
 - How will we version datasets to ensure reproducibility across runs?
-

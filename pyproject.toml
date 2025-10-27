@@ -60,7 +60,6 @@ include = [
     "config.py",
     "eval.py",
     "setup.py",
-    "setup_and_test.sh",
 ]
 
 [dependency-groups]
