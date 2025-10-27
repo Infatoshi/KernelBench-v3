@@ -83,6 +83,38 @@ diff --git a/tools/modal_raw.py b/tools/modal_raw.py
 
 ## validate
 - `bash setup_and_run.sh configs/modal_raw.yaml`
+# 2025-10-27 Harden Modal repo detection permissions
+
+## rationale
+Prevent `_detect_repo_root` from failing when it probes `/root/KernelBench-v3` without sufficient privileges by treating permission errors as non-matches.
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+-    def _is_repo_root(path: Path) -> bool:
+-        return (path / _SRC_MARKER).exists()
++    def _is_repo_root(path: Path) -> bool:
++        marker = path / _SRC_MARKER
++        try:
++            return marker.exists()
++        except OSError:
++            return False
+```
+
+## validate
+- `uv run python - <<'PY'` (script below)
+```python
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "src")
+
+from modal_support.config import ModalRawConfig
+
+ModalRawConfig.load(Path("configs/all_providers_raw.yaml"))
+PY
+```
 ## rationale
 Prevent expensive benchmarks from starting with missing or misconfigured API credentials, and harden provider adapters (especially Gemini) so preflight probes succeed while surfacing actionable failures.
 
@@ -34441,4 +34473,46 @@ diff --git a/setup_and_run.sh b/setup_and_run.sh
 
 ## validate
 - `bash setup_and_run.sh configs/modal_raw.yaml` (fails fast without GROQ_API_KEY, succeeds once exported)
+# 2025-10-27 Add Modal defaults to all_providers_raw
 
+## rationale
+Ensure `ModalRawConfig.load` can parse `configs/all_providers_raw.yaml` by explicitly defining Modal image, GPU, and timeout settings instead of relying on missing defaults.
+
+## patch
+```diff
+diff --git a/configs/all_providers_raw.yaml b/configs/all_providers_raw.yaml
+@@
+ problems:
+   levels: [1, 2]
+   problem_ids: null
+   max_problems: 100
+
+ modal:
+   image:
+     cuda_version: "12.8.1"
+     os_tag: "ubuntu24.04"
+     python_version: "3.12"
+   gpu:
+     name: "A100"
+     count: 1
+   timeouts:
+     process_seconds: 120
+
+ agentic:
+   max_debug_attempts: 3
+   max_optimization_cycles: 2
+```
+
+## validate
+- `uv run python - <<'PY'` (script below)
+```python
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "src")
+
+from modal_support.config import ModalRawConfig
+
+ModalRawConfig.load(Path("configs/all_providers_raw.yaml"))
+PY
+```

@@ -5,7 +5,6 @@ modes:
 
 languages:
   - cuda
-  - triton
 
 models:
   - provider: gemini
@@ -51,6 +50,17 @@ problems:
   levels: [1, 2]
   problem_ids: null
   max_problems: 100
+
+modal:
+  image:
+    cuda_version: "12.8.1"
+    os_tag: "ubuntu24.04"
+    python_version: "3.12"
+  gpu:
+    name: "A100"
+    count: 1
+  timeouts:
+    process_seconds: 120
 
 agentic:
   max_debug_attempts: 3

@@ -20,7 +20,11 @@ def _detect_repo_root() -> Path:
     """Return the repository root for both local and Modal executions."""
 
     def _is_repo_root(path: Path) -> bool:
-        return (path / _SRC_MARKER).exists()
+        marker = path / _SRC_MARKER
+        try:
+            return marker.exists()
+        except OSError:
+            return False
 
     script_path = Path(__file__).resolve()
     script_parent = script_path.parent
