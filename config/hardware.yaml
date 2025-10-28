@@ -1,0 +1,17 @@
+default_gpu: A100
+gpus:
+  A100:
+    architecture: Ampere
+    memory_gb: 80
+    memory_type: HBM2e
+    tensor_core_generation: "3rd"
+  H100:
+    architecture: Hopper
+    memory_gb: 80
+    memory_type: HBM3
+    tensor_core_generation: "4th"
+  L40S:
+    architecture: Ada Lovelace
+    memory_gb: 48
+    memory_type: GDDR6
+    tensor_core_generation: "4th"

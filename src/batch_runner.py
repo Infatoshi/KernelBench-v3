@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Tuple
 import yaml
 
 from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig
+from hardware.specs import default_gpu_name, gpu_spec
 from metrics import load_metrics, save_metrics
 from providers import verify_model_responds_hello
 
@@ -36,28 +37,6 @@ def sanitize_component(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
 
 
-def _resolve_cpu_concurrency(value: object | None) -> int:
-    """Coerce CPU worker counts, honoring the 'max' sentinel."""
-    if value is None:
-        return HOST_CPU_COUNT
-    if isinstance(value, str):
-        if value.strip().lower() == "max":
-            return HOST_CPU_COUNT
-        raise ValueError(f"Unsupported cpu concurrency token: {value}")
-    return max(1, int(value))
-
-
-def _resolve_max_jobs(value: object | None) -> int:
-    """Allow YAML to specify 'max' for job fan-out."""
-    if isinstance(value, str):
-        if value.strip().lower() == "max":
-            return HOST_CPU_COUNT
-        raise ValueError(f"Unsupported max_jobs token: {value}")
-    if value is None:
-        return HOST_CPU_COUNT
-    return max(1, int(value))
-
-
 def expand_run_matrix(yaml_data: Dict[str, Any]) -> List[Tuple[str, str, Dict[str, Any]]]:
     """Return the (mode, language, model) combinations requested by the config."""
     models = yaml_data.get("models", [])
@@ -66,13 +45,13 @@ def expand_run_matrix(yaml_data: Dict[str, Any]) -> List[Tuple[str, str, Dict[st
 
     modes = yaml_data.get("modes")
     if not modes:
-        legacy_mode = yaml_data.get("mode", "raw")
-        modes = [legacy_mode]
+        legacy_mode = yaml_data.get("mode")
+        modes = [legacy_mode] if legacy_mode else ["raw", "agentic"]
 
     languages = yaml_data.get("languages")
     if not languages:
-        legacy_language = yaml_data.get("language", "triton")
-        languages = [legacy_language]
+        legacy_language = yaml_data.get("language")
+        languages = [legacy_language] if legacy_language else ["cuda", "triton"]
 
     combinations: List[Tuple[str, str, Dict[str, Any]]] = []
     for mode, language, model_entry in product(modes, languages, models):
@@ -143,10 +122,24 @@ def _verify_provider_models(
 
 
 def _resolve_hardware(yaml_data: Dict[str, Any]) -> HardwareConfig:
-    hw_data = yaml_data.get("hardware", {})
+    modal_cfg = yaml_data.get("modal") or {}
+    gpu_cfg = modal_cfg.get("gpu") or {}
+    hw_cfg = yaml_data.get("hardware") or {}
+
+    gpu_name = gpu_cfg.get("name") or hw_cfg.get("gpu_name") or default_gpu_name()
+    spec = gpu_spec(gpu_name)
+
+    architecture = spec.architecture
+    if architecture == "unknown":
+        architecture = hw_cfg.get("gpu_architecture", "unknown")
+
     return HardwareConfig(
-        gpu_architecture=hw_data.get("gpu_architecture", "Ampere"),
-        gpu_id=hw_data.get("gpu_id", 0),
+        gpu_name=spec.name,
+        gpu_architecture=architecture,
+        gpu_id=int(hw_cfg.get("gpu_id", 0) or 0),
+        gpu_memory_gb=spec.memory_gb,
+        gpu_memory_type=spec.memory_type,
+        tensor_core_generation=spec.tensor_core_generation,
     )
 
 
@@ -196,7 +189,6 @@ def yaml_to_benchmark_config(
 
     cli_overrides = cli_overrides or {}
     defaults = yaml_data.get("defaults", {})
-    raw_defaults = defaults.get("raw", {})
 
     provider = model_entry.get("provider") or yaml_data.get("provider", "openai")
     model_id = model_entry.get("model") or yaml_data.get("generator_model", "gpt-4-turbo")
@@ -222,41 +214,20 @@ def yaml_to_benchmark_config(
     num_runs = model_entry.get("num_runs", yaml_data.get("num_runs", defaults.get("num_runs")))
     if "num_runs" in cli_overrides:
         num_runs = cli_overrides["num_runs"]
-    profile_stages = model_entry.get(
-        "profile_stages",
-        yaml_data.get("profile_stages", defaults.get("profile_stages", False)),
-    )
-    if cli_overrides.get("profile_stages") is True:
-        profile_stages = True
+    profile_stages = True
 
-    raw_settings = yaml_data.get("raw", {}) or {}
+    modal_gpu_cfg = (yaml_data.get("modal") or {}).get("gpu") or {}
+    modal_gpu_count = int(modal_gpu_cfg.get("count") or 1)
+    env_gpu_count = os.environ.get("KB3_MODAL_GPU_COUNT")
+    if env_gpu_count:
+        try:
+            modal_gpu_count = max(modal_gpu_count, int(env_gpu_count))
+        except ValueError:
+            pass
 
-    raw_concurrency = cli_overrides.get("raw_concurrency")
-    if raw_concurrency is None:
-        raw_concurrency = yaml_data.get("raw_concurrency")
-    if raw_concurrency is None:
-        raw_concurrency = raw_settings.get("cpu_concurrency")
-    if raw_concurrency is None:
-        raw_concurrency = raw_defaults.get("cpu_concurrency")
-    raw_concurrency = _resolve_cpu_concurrency(raw_concurrency)
-
-    raw_gpu_concurrency = cli_overrides.get("raw_gpu_concurrency")
-    if raw_gpu_concurrency is None:
-        raw_gpu_concurrency = yaml_data.get("raw_gpu_concurrency")
-    if raw_gpu_concurrency is None:
-        raw_gpu_concurrency = raw_settings.get("gpu_concurrency")
-    if raw_gpu_concurrency is None:
-        raw_gpu_concurrency = raw_defaults.get("gpu_concurrency", 1)
-    raw_gpu_concurrency = int(raw_gpu_concurrency)
-
-    raw_max_jobs = cli_overrides.get("raw_max_jobs")
-    if raw_max_jobs is None:
-        raw_max_jobs = yaml_data.get("raw_max_jobs")
-    if raw_max_jobs is None:
-        raw_max_jobs = raw_settings.get("max_jobs")
-    if raw_max_jobs is None:
-        raw_max_jobs = raw_defaults.get("max_jobs")
-    raw_max_jobs = _resolve_max_jobs(raw_max_jobs)
+    raw_concurrency = HOST_CPU_COUNT
+    raw_gpu_concurrency = max(1, modal_gpu_count)
+    raw_max_jobs = HOST_CPU_COUNT
 
     generation_max_tokens = model_entry.get("generation_max_tokens")
     if generation_max_tokens is None:
@@ -371,13 +342,20 @@ def run_batch_benchmark(
     yaml_data = load_yaml_config(yaml_path)
     run_plan = expand_run_matrix(yaml_data)
 
-    artifacts_cfg = yaml_data.get("artifacts", {})
-    json_dir = Path(artifacts_cfg.get("json_dir", "json"))
-    plots_dir = Path(artifacts_cfg.get("plots_dir", artifacts_cfg.get("plots", "plots")))
+    artifacts_cfg = yaml_data.get("artifacts", {}) or {}
+    outputs_root = Path(artifacts_cfg.get("root", "outputs"))
+    json_dir = outputs_root / artifacts_cfg.get("json_dir", "json")
+    plots_dir = outputs_root / artifacts_cfg.get("plots_dir", artifacts_cfg.get("plots", "plots"))
 
     yaml_data.setdefault("artifacts", {})
+    yaml_data["artifacts"]["root"] = str(outputs_root)
     yaml_data["artifacts"]["json_dir"] = str(json_dir)
     yaml_data["artifacts"]["plots_dir"] = str(plots_dir)
+    viz_defaults = yaml_data.setdefault("visualization", {})
+    if not isinstance(viz_defaults, dict):
+        viz_defaults = {}
+        yaml_data["visualization"] = viz_defaults
+    viz_defaults.setdefault("enabled", True)
 
     total_runs = len(run_plan)
     print(f"\n{'=' * 70}")

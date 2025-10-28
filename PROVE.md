@@ -34551,3 +34551,620 @@ diff --git a/tools/modal_raw.py b/tools/modal_raw.py
 
 ## validate
 - `uv run python -m compileall tools/modal_raw.py`
+
+# 2025-10-28 GPU hardware catalog
+
+## rationale
+Describe Modal GPU characteristics in YAML and expose a helper so runtime logic can derive hardware metadata from the selected GPU name.
+
+## patch
+```diff
+diff --git a/config/hardware.yaml b/config/hardware.yaml
+new file mode 100644
+index 0000000..0e76d3e
+--- /dev/null
++++ b/config/hardware.yaml
+@@
++default_gpu: A100
++gpus:
++  A100:
++    architecture: Ampere
++    memory_gb: 80
++    memory_type: HBM2e
++    tensor_core_generation: "3rd"
++  H100:
++    architecture: Hopper
++    memory_gb: 80
++    memory_type: HBM3
++    tensor_core_generation: "4th"
++  L40S:
++    architecture: Ada Lovelace
++    memory_gb: 48
++    memory_type: GDDR6
++    tensor_core_generation: "4th"
+diff --git a/src/hardware/specs.py b/src/hardware/specs.py
+new file mode 100644
+index 0000000..c2a9e1e
+--- /dev/null
++++ b/src/hardware/specs.py
+@@
++"""GPU hardware specification helpers loaded from YAML."""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from functools import lru_cache
++from pathlib import Path
++from typing import Any, Dict
++
++import yaml
++
++
++@dataclass(frozen=True)
++class GpuSpec:
++    """Normalized GPU hardware metadata."""
++
++    name: str
++    architecture: str
++    memory_gb: int | None = None
++    memory_type: str | None = None
++    tensor_core_generation: str | None = None
++
++
++def _config_path() -> Path:
++    """Return the path to the GPU spec YAML file."""
++    repo_root = Path(__file__).resolve().parents[2]
++    return repo_root / "config" / "hardware.yaml"
++
++
++@lru_cache(maxsize=1)
++def _load_config() -> Dict[str, Any]:
++    path = _config_path()
++    with path.open("r", encoding="utf-8") as handle:
++        payload = yaml.safe_load(handle) or {}
++    if not isinstance(payload, dict):
++        raise ValueError(f"Expected mapping in {path}, found {type(payload).__name__}")
++    return payload
++
++
++def default_gpu_name() -> str:
++    """Return the default GPU name configured for Modal runs."""
++    data = _load_config()
++    value = data.get("default_gpu", "A100")
++    if not isinstance(value, str):
++        raise ValueError("`default_gpu` must be a string in config/hardware.yaml")
++    return value
++
++
++def gpu_spec(name: str | None) -> GpuSpec:
++    """Lookup the GPU specification for the given Modal GPU name."""
++    data = _load_config()
++    inventory = data.get("gpus") or {}
++    if not isinstance(inventory, dict):
++        raise ValueError("`gpus` must be a mapping in config/hardware.yaml")
++
++    candidate = (name or "").strip()
++    if not candidate:
++        candidate = default_gpu_name()
++
++    record = inventory.get(candidate)
++    canonical_name = candidate
++    if record is None:
++        lowered = {key.lower(): key for key in inventory.keys()}
++        key = lowered.get(candidate.lower())
++        if key:
++            record = inventory.get(key)
++            canonical_name = key
++
++    if not isinstance(record, dict):
++        return GpuSpec(name=canonical_name, architecture="unknown")
++
++    return GpuSpec(
++        name=canonical_name,
++        architecture=str(record.get("architecture", "unknown")),
++        memory_gb=_safe_int(record.get("memory_gb")),
++        memory_type=_safe_str(record.get("memory_type")),
++        tensor_core_generation=_safe_str(record.get("tensor_core_generation")),
++    )
++
++
++def _safe_int(value: Any) -> int | None:
++    if value is None:
++        return None
++    try:
++        return int(value)
++    except (TypeError, ValueError):
++        return None
++
++
++def _safe_str(value: Any) -> str | None:
++    if value is None:
++        return None
++    return str(value)
+```
+
+## validate
+- `uv run python -m compileall src/hardware/specs.py`
+
+# 2025-10-28 Expand hardware metadata
+
+## rationale
+Expose GPU names and basic specs in `HardwareConfig` so downstream runners can describe the Modal device accurately.
+
+## patch
+```diff
+diff --git a/config.py b/config.py
+index d8dd370..edea121 100644
+--- a/config.py
++++ b/config.py
+@@
+ @dataclass
+ class HardwareConfig:
++    gpu_name: str = "A100"
+     gpu_architecture: str = "Ampere"
+     gpu_id: int = 0
++    gpu_memory_gb: int | None = None
++    gpu_memory_type: str | None = None
++    tensor_core_generation: str | None = None
+```
+
+## validate
+- `uv run python -m compileall config.py`
+
+# 2025-10-28 Modal config fallbacks
+
+## rationale
+Allow configs without a `modal` section by sourcing defaults from the hardware catalog and environment variables.
+
+## patch
+```diff
+diff --git a/src/modal_support/config.py b/src/modal_support/config.py
+index 721ae04..e99c909 100644
+--- a/src/modal_support/config.py
++++ b/src/modal_support/config.py
+@@
+-from dataclasses import dataclass
+-from pathlib import Path
+-from typing import Any
+-
+-import yaml
++from dataclasses import dataclass
++import os
++from pathlib import Path
++from typing import Any
++
++import yaml
++from hardware.specs import default_gpu_name, gpu_spec
+@@
+-        modal_data = data.get("modal")
+-        if not isinstance(modal_data, dict):
+-            raise ValueError(f"'modal' section missing in {yaml_path}")
++        modal_data = data.get("modal") or {}
++        if not isinstance(modal_data, dict):
++            raise ValueError(f"'modal' section must be a mapping in {yaml_path}")
+@@
+-        image = ModalImageSpec(
+-            cuda_version=str(image_data.get("cuda_version", "12.8.1")),
+-            os_tag=str(image_data.get("os_tag", "ubuntu24.04")),
+-            python_version=str(image_data.get("python_version", "3.12")),
+-        )
+-        gpu = ModalGpuSpec(
+-            name=str(gpu_data.get("name", "H100")),
+-            count=int(gpu_data.get("count", 1)),
+-        )
+-        timeouts = ModalTimeoutSpec(
+-            process_seconds=int(timeout_data.get("process_seconds", 120))
+-        ).clamp()
++        image = _resolve_image(image_data)
++        gpu = _resolve_gpu(gpu_data)
++        timeouts = _resolve_timeouts(timeout_data)
+@@
++def _resolve_image(image_data: dict[str, Any]) -> ModalImageSpec:
++    cuda_version = str(image_data.get("cuda_version") or "12.8.1")
++    os_tag = str(image_data.get("os_tag") or "ubuntu24.04")
++    python_version = str(image_data.get("python_version") or "3.12")
++    return ModalImageSpec(
++        cuda_version=cuda_version,
++        os_tag=os_tag,
++        python_version=python_version,
++    )
++
++
++def _resolve_gpu(gpu_data: dict[str, Any]) -> ModalGpuSpec:
++    env_gpu = os.environ.get("KB3_MODAL_GPU_NAME")
++    configured_name = gpu_data.get("name") or env_gpu or default_gpu_name()
++    spec = gpu_spec(str(configured_name))
++
++    count_value = gpu_data.get("count") or os.environ.get("KB3_MODAL_GPU_COUNT") or spec_count_default()
++    try:
++        count = int(count_value)
++    except (TypeError, ValueError):
++        count = 1
++    if count <= 0:
++        count = 1
++
++    return ModalGpuSpec(name=spec.name, count=count)
++
++
++def _resolve_timeouts(timeout_data: dict[str, Any]) -> ModalTimeoutSpec:
++    process_seconds = timeout_data.get("process_seconds")
++    if process_seconds is None:
++        env_override = os.environ.get("KB3_MODAL_TIMEOUT_SECONDS")
++        process_seconds = env_override if env_override is not None else 120
++    try:
++        seconds = int(process_seconds)
++    except (TypeError, ValueError):
++        seconds = 120
++    return ModalTimeoutSpec(process_seconds=seconds).clamp()
++
++
++def spec_count_default() -> int:
++    env_default = os.environ.get("KB3_MODAL_GPU_COUNT_DEFAULT")
++    if env_default is not None:
++        try:
++            value = int(env_default)
++            if value > 0:
++                return value
++        except ValueError:
++            pass
++    return 1
+```
+
+## validate
+- `uv run python -m compileall src/modal_support/config.py`
+
+# 2025-10-28 Batch runner auto-parallelism
+
+## rationale
+Default to full CPU/GPU utilization, infer Modal hardware, and place artifacts beneath `outputs/` to match Modal runs.
+
+## patch
+```diff
+diff --git a/src/batch_runner.py b/src/batch_runner.py
+index dd95287..d13d8a2 100644
+--- a/src/batch_runner.py
++++ b/src/batch_runner.py
+@@
+-from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig
++from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig
++from hardware.specs import default_gpu_name, gpu_spec
+@@
+-    modes = yaml_data.get("modes")
+-    if not modes:
+-        legacy_mode = yaml_data.get("mode", "raw")
+-        modes = [legacy_mode]
++    modes = yaml_data.get("modes")
++    if not modes:
++        legacy_mode = yaml_data.get("mode")
++        modes = [legacy_mode] if legacy_mode else ["raw", "agentic"]
+@@
+-    languages = yaml_data.get("languages")
+-    if not languages:
+-        legacy_language = yaml_data.get("language", "triton")
+-        languages = [legacy_language]
++    languages = yaml_data.get("languages")
++    if not languages:
++        legacy_language = yaml_data.get("language")
++        languages = [legacy_language] if legacy_language else ["cuda", "triton"]
+@@
+-def _resolve_hardware(yaml_data: Dict[str, Any]) -> HardwareConfig:
+-    hw_data = yaml_data.get("hardware", {})
+-    return HardwareConfig(
+-        gpu_architecture=hw_data.get("gpu_architecture", "Ampere"),
+-        gpu_id=hw_data.get("gpu_id", 0),
+-    )
++def _resolve_hardware(yaml_data: Dict[str, Any]) -> HardwareConfig:
++    modal_cfg = yaml_data.get("modal") or {}
++    gpu_cfg = modal_cfg.get("gpu") or {}
++    hw_cfg = yaml_data.get("hardware") or {}
++
++    gpu_name = gpu_cfg.get("name") or hw_cfg.get("gpu_name") or default_gpu_name()
++    spec = gpu_spec(gpu_name)
++
++    architecture = spec.architecture
++    if architecture == "unknown":
++        architecture = hw_cfg.get("gpu_architecture", "unknown")
++
++    return HardwareConfig(
++        gpu_name=spec.name,
++        gpu_architecture=architecture,
++        gpu_id=int(hw_cfg.get("gpu_id", 0) or 0),
++        gpu_memory_gb=spec.memory_gb,
++        gpu_memory_type=spec.memory_type,
++        tensor_core_generation=spec.tensor_core_generation,
++    )
+@@
+-    num_runs = model_entry.get("num_runs", yaml_data.get("num_runs", defaults.get("num_runs")))
+-    if "num_runs" in cli_overrides:
+-        num_runs = cli_overrides["num_runs"]
+-    profile_stages = model_entry.get(
+-        "profile_stages",
+-        yaml_data.get("profile_stages", defaults.get("profile_stages", False)),
+-    )
+-    if cli_overrides.get("profile_stages") is True:
+-        profile_stages = True
+--
+-    raw_settings = yaml_data.get("raw", {}) or {}
+-
+-    raw_concurrency = cli_overrides.get("raw_concurrency")
+-    if raw_concurrency is None:
+-        raw_concurrency = yaml_data.get("raw_concurrency")
+-    if raw_concurrency is None:
+-        raw_concurrency = raw_settings.get("cpu_concurrency")
+-    if raw_concurrency is None:
+-        raw_concurrency = raw_defaults.get("cpu_concurrency")
+-    raw_concurrency = _resolve_cpu_concurrency(raw_concurrency)
+-
+-    raw_gpu_concurrency = cli_overrides.get("raw_gpu_concurrency")
+-    if raw_gpu_concurrency is None:
+-        raw_gpu_concurrency = yaml_data.get("raw_gpu_concurrency")
+-    if raw_gpu_concurrency is None:
+-        raw_gpu_concurrency = raw_settings.get("gpu_concurrency")
+-    if raw_gpu_concurrency is None:
+-        raw_gpu_concurrency = raw_defaults.get("gpu_concurrency", 1)
+-    raw_gpu_concurrency = int(raw_gpu_concurrency)
+-
+-    raw_max_jobs = cli_overrides.get("raw_max_jobs")
+-    if raw_max_jobs is None:
+-        raw_max_jobs = yaml_data.get("raw_max_jobs")
+-    if raw_max_jobs is None:
+-        raw_max_jobs = raw_settings.get("max_jobs")
+-    if raw_max_jobs is None:
+-        raw_max_jobs = raw_defaults.get("max_jobs")
+-    raw_max_jobs = _resolve_max_jobs(raw_max_jobs)
++    num_runs = model_entry.get("num_runs", yaml_data.get("num_runs", defaults.get("num_runs")))
++    if "num_runs" in cli_overrides:
++        num_runs = cli_overrides["num_runs"]
++    profile_stages = True
++
++    modal_gpu_cfg = (yaml_data.get("modal") or {}).get("gpu") or {}
++    modal_gpu_count = int(modal_gpu_cfg.get("count") or 1)
++    env_gpu_count = os.environ.get("KB3_MODAL_GPU_COUNT")
++    if env_gpu_count:
++        try:
++            modal_gpu_count = max(modal_gpu_count, int(env_gpu_count))
++        except ValueError:
++            pass
++
++    raw_concurrency = HOST_CPU_COUNT
++    raw_gpu_concurrency = max(1, modal_gpu_count)
++    raw_max_jobs = HOST_CPU_COUNT
+@@
+-    artifacts_cfg = yaml_data.get("artifacts", {})
+-    json_dir = Path(artifacts_cfg.get("json_dir", "json"))
+-    plots_dir = Path(artifacts_cfg.get("plots_dir", artifacts_cfg.get("plots", "plots")))
+-
+-    yaml_data.setdefault("artifacts", {})
+-    yaml_data["artifacts"]["json_dir"] = str(json_dir)
+-    yaml_data["artifacts"]["plots_dir"] = str(plots_dir)
++    artifacts_cfg = yaml_data.get("artifacts", {}) or {}
++    outputs_root = Path(artifacts_cfg.get("root", "outputs"))
++    json_dir = outputs_root / artifacts_cfg.get("json_dir", "json")
++    plots_dir = outputs_root / artifacts_cfg.get("plots_dir", artifacts_cfg.get("plots", "plots"))
++
++    yaml_data.setdefault("artifacts", {})
++    yaml_data["artifacts"]["root"] = str(outputs_root)
++    yaml_data["artifacts"]["json_dir"] = str(json_dir)
++    yaml_data["artifacts"]["plots_dir"] = str(plots_dir)
++    viz_defaults = yaml_data.setdefault("visualization", {})
++    if not isinstance(viz_defaults, dict):
++        viz_defaults = {}
++        yaml_data["visualization"] = viz_defaults
++    viz_defaults.setdefault("enabled", True)
+```
+
+## validate
+- `uv run python -m compileall src/batch_runner.py`
+# 2025-10-28 Propagate Modal GPU env
+
+## rationale
+Surface the Modal GPU identity inside the container so batch runs can infer hardware and concurrency settings automatically.
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+index 2a19763..8a82462 100644
+--- a/tools/modal_raw.py
++++ b/tools/modal_raw.py
+@@
+ REPO_NAME = "KernelBench-v3"
+ _SRC_MARKER = Path("src") / "modal_support" / "config.py"
+ 
++def _extract_config_arg(argv: Sequence[str]) -> str | None:
++    """Return a CLI-specified config path if present."""
++    for idx, token in enumerate(argv[1:], start=1):
++        if token == "--config" and idx + 1 < len(argv):
++            return argv[idx + 1]
++        if token.startswith("--config="):
++            _, value = token.split("=", 1)
++            return value
++    return None
++
++
++_CLI_CONFIG_OVERRIDE = _extract_config_arg(sys.argv)
++if _CLI_CONFIG_OVERRIDE:
++    os.environ["KB3_MODAL_CONFIG_PATH"] = _CLI_CONFIG_OVERRIDE
++
+@@
+-CONFIG_PATH_RELPATH = str(CONFIG_PATH_WITHIN_REPO)
+-os.environ.setdefault("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH)
+-MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
++CONFIG_PATH_RELPATH = str(CONFIG_PATH_WITHIN_REPO)
++os.environ.setdefault("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH)
++MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
++os.environ.setdefault("KB3_MODAL_GPU_NAME", MODAL_CONFIG.gpu.name)
++os.environ.setdefault("KB3_MODAL_GPU_COUNT", str(MODAL_CONFIG.gpu.count))
+@@
+-    .apt_install("build-essential", "rsync", "curl")
+-    .pip_install("PyYAML==6.0.3")
+-    .run_commands(*_ensure_uv_installed_commands())
++    .apt_install("build-essential", "rsync", "curl")
++    .pip_install("PyYAML==6.0.3")
++    .env(
++        {
++            "KB3_MODAL_CONFIG_PATH": CONFIG_PATH_RELPATH,
++            "KB3_MODAL_GPU_NAME": MODAL_CONFIG.gpu.name,
++            "KB3_MODAL_GPU_COUNT": str(MODAL_CONFIG.gpu.count),
++        }
++    )
++    .run_commands(*_ensure_uv_installed_commands())
+@@
+-    config_arg = str(CONFIG_PATH_WITHIN_REPO)
++    config_arg = os.environ.get("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH) or CONFIG_PATH_RELPATH
++    print(f"[modal/raw] invoking eval.py with --config {config_arg}")
+```
+
+## validate
+- `uv run python -m compileall tools/modal_raw.py`
+
+# 2025-10-28 Support CLI config override for Modal entrypoint
+
+## rationale
+Allow `modal run tools/modal_raw.py --config <path>` to forward a custom config path without relying on external environment variables.
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+-REPO_NAME = "KernelBench-v3"
+-_SRC_MARKER = Path("src") / "modal_support" / "config.py"
++REPO_NAME = "KernelBench-v3"
++_SRC_MARKER = Path("src") / "modal_support" / "config.py"
++
++def _extract_config_arg(argv: Sequence[str]) -> str | None:
++    """Return a CLI-specified config path if present."""
++    for idx, token in enumerate(argv[1:], start=1):
++        if token == "--config" and idx + 1 < len(argv):
++            return argv[idx + 1]
++        if token.startswith("--config="):
++            _, value = token.split("=", 1)
++            return value
++    return None
++
++
++_CLI_CONFIG_OVERRIDE = _extract_config_arg(sys.argv)
++if _CLI_CONFIG_OVERRIDE:
++    os.environ["KB3_MODAL_CONFIG_PATH"] = _CLI_CONFIG_OVERRIDE
+```
+
+## validate
+- `uv run python -m compileall tools/modal_raw.py`
+
+# 2025-10-28 Trace config hand-off
+
+## rationale
+Surface the exact config path Modal uses when launching `eval.py` to verify the override at runtime.
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+    _run_subprocess(["uv", "sync"], cwd=workdir)
+-    config_arg = CONFIG_PATH_RELPATH
++    config_arg = os.environ.get("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH) or CONFIG_PATH_RELPATH
++    print(f"[modal/raw] invoking eval.py with --config {config_arg}")
+    _run_subprocess(
+        ["uv", "run", "python", "eval.py", "--config", config_arg],
+        cwd=workdir,
+    )
+```
+
+## validate
+- `uv run python -m compileall tools/modal_raw.py`
+# 2025-10-28 Propagate Modal config env
+
+## rationale
+Ensure Modal workers honor the user-specified config by pinning `KB3_MODAL_CONFIG_PATH` inside the container image instead of falling back to the default.
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+-CONFIG_ENV = os.environ.get("KB3_MODAL_CONFIG_PATH", "configs/modal_raw.yaml")
+-CONFIG_PATH = Path(CONFIG_ENV)
+-if not CONFIG_PATH.is_absolute():
+-    CONFIG_PATH = REPO_ROOT / CONFIG_PATH
+-try:
+-    CONFIG_PATH_WITHIN_REPO = CONFIG_PATH.relative_to(REPO_ROOT)
+-except ValueError as exc:  # pragma: no cover - malformed config location
+-    raise RuntimeError(
+-        f"Modal config must reside inside the repository: {CONFIG_PATH}"
+-    ) from exc
++CONFIG_ENV = os.environ.get("KB3_MODAL_CONFIG_PATH", "configs/modal_raw.yaml")
++CONFIG_PATH = Path(CONFIG_ENV)
++if not CONFIG_PATH.is_absolute():
++    CONFIG_PATH = REPO_ROOT / CONFIG_PATH
++try:
++    CONFIG_PATH_WITHIN_REPO = CONFIG_PATH.relative_to(REPO_ROOT)
++except ValueError as exc:  # pragma: no cover - malformed config location
++    raise RuntimeError(
++        f"Modal config must reside inside the repository: {CONFIG_PATH}"
++    ) from exc
++CONFIG_PATH_RELPATH = str(CONFIG_PATH_WITHIN_REPO)
++os.environ.setdefault("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH)
+@@
+ image = (
+     modal.Image.from_registry(
+         f"nvidia/cuda:{MODAL_CONFIG.image.registry_tag}",
+         add_python=MODAL_CONFIG.image.python_version,
+     )
+     .apt_install("build-essential", "rsync", "curl")
+     .pip_install("PyYAML==6.0.3")
++    .env({"KB3_MODAL_CONFIG_PATH": CONFIG_PATH_RELPATH})
+     .run_commands(*_ensure_uv_installed_commands())
+     .add_local_dir(str(REPO_ROOT), remote_path="/workspace_src")
+ )
+@@
+-    config_arg = str(CONFIG_PATH_WITHIN_REPO)
++    config_arg = CONFIG_PATH_RELPATH
+```
+
+## validate
+- `uv run python -m compileall tools/modal_raw.py`
+
+
+# 2025-10-28 Visualization auto-metrics
+
+## rationale
+Plot every numeric metric collected during batch runs without requiring manual configuration.
+
+## patch
+```diff
+diff --git a/src/visualization.py b/src/visualization.py
+index 42e7b78..97d2655 100644
+--- a/src/visualization.py
++++ b/src/visualization.py
+@@
+-def generate_bar_chart(model_metrics: List[Dict[str, Any]], output_dir: Path, viz_config: Dict[str, Any]) -> None:
++def _infer_metrics_to_plot(model_metrics: List[Dict[str, Any]]) -> List[str]:
++    """Return sorted metric keys suitable for visualization."""
++    numeric_keys: List[str] = []
++    excluded = {"model", "provider", "model_name", "mode", "language", "status"}
++    for record in model_metrics:
++        for key, value in record.items():
++            if key in excluded:
++                continue
++            if isinstance(value, (int, float)):
++                if key not in numeric_keys:
++                    numeric_keys.append(key)
++    return numeric_keys
++
++
++def generate_bar_chart(model_metrics: List[Dict[str, Any]], output_dir: Path, viz_config: Dict[str, Any]) -> None:
+@@
+-    metrics_to_plot = viz_config.get("metrics", [
+-        "compilation_rate",
+-        "correctness_rate",
+-        "fast_1_rate",
+-    ])
++    configured_metrics = viz_config.get("metrics")
++    if configured_metrics:
++        metrics_to_plot = configured_metrics
++    else:
++        metrics_to_plot = _infer_metrics_to_plot(model_metrics)
++    if not metrics_to_plot:
++        return
+```
+
+## validate
+- `uv run python -m compileall src/visualization.py`

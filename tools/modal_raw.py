@@ -14,6 +14,21 @@ import modal
 REPO_NAME = "KernelBench-v3"
 _SRC_MARKER = Path("src") / "modal_support" / "config.py"
 
+def _extract_config_arg(argv: Sequence[str]) -> str | None:
+    """Return a CLI-specified config path if present."""
+    for idx, token in enumerate(argv[1:], start=1):
+        if token == "--config" and idx + 1 < len(argv):
+            return argv[idx + 1]
+        if token.startswith("--config="):
+            _, value = token.split("=", 1)
+            return value
+    return None
+
+
+_CLI_CONFIG_OVERRIDE = _extract_config_arg(sys.argv)
+if _CLI_CONFIG_OVERRIDE:
+    os.environ["KB3_MODAL_CONFIG_PATH"] = _CLI_CONFIG_OVERRIDE
+
 
 # Ensure local packages are importable when Modal loads this module.
 def _detect_repo_root() -> Path:
@@ -80,7 +95,11 @@ except ValueError as exc:  # pragma: no cover - malformed config location
     raise RuntimeError(
         f"Modal config must reside inside the repository: {CONFIG_PATH}"
     ) from exc
+CONFIG_PATH_RELPATH = str(CONFIG_PATH_WITHIN_REPO)
+os.environ.setdefault("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH)
 MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
+os.environ.setdefault("KB3_MODAL_GPU_NAME", MODAL_CONFIG.gpu.name)
+os.environ.setdefault("KB3_MODAL_GPU_COUNT", str(MODAL_CONFIG.gpu.count))
 TIMEOUT = MODAL_CONFIG.timeouts.process_seconds
 _GROQ_SECRET_ATTACHED = False
 
@@ -157,6 +176,13 @@ image = (
     )
     .apt_install("build-essential", "rsync", "curl")
     .pip_install("PyYAML==6.0.3")
+    .env(
+        {
+            "KB3_MODAL_CONFIG_PATH": CONFIG_PATH_RELPATH,
+            "KB3_MODAL_GPU_NAME": MODAL_CONFIG.gpu.name,
+            "KB3_MODAL_GPU_COUNT": str(MODAL_CONFIG.gpu.count),
+        }
+    )
     .run_commands(*_ensure_uv_installed_commands())
     .add_local_dir(str(REPO_ROOT), remote_path="/workspace_src")
 )
@@ -195,7 +221,8 @@ def run_raw_eval() -> None:
         print("[modal/raw] WARNING: GROQ_API_KEY is not set inside the Modal task.")
 
     _run_subprocess(["uv", "sync"], cwd=workdir)
-    config_arg = str(CONFIG_PATH_WITHIN_REPO)
+    config_arg = os.environ.get("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH) or CONFIG_PATH_RELPATH
+    print(f"[modal/raw] invoking eval.py with --config {config_arg}")
     _run_subprocess(
         ["uv", "run", "python", "eval.py", "--config", config_arg],
         cwd=workdir,

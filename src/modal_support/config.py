@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from hardware.specs import default_gpu_name, gpu_spec
 
 @dataclass(frozen=True)
 class ModalImageSpec:
@@ -65,26 +67,17 @@ class ModalRawConfig:
     @classmethod
     def load(cls, yaml_path: Path) -> "ModalRawConfig":
         data = _load_yaml(yaml_path)
-        modal_data = data.get("modal")
+        modal_data = data.get("modal") or {}
         if not isinstance(modal_data, dict):
-            raise ValueError(f"'modal' section missing in {yaml_path}")
+            raise ValueError(f"'modal' section must be a mapping in {yaml_path}")
 
         image_data = modal_data.get("image") or {}
         gpu_data = modal_data.get("gpu") or {}
         timeout_data = modal_data.get("timeouts") or {}
 
-        image = ModalImageSpec(
-            cuda_version=str(image_data.get("cuda_version", "12.8.1")),
-            os_tag=str(image_data.get("os_tag", "ubuntu24.04")),
-            python_version=str(image_data.get("python_version", "3.12")),
-        )
-        gpu = ModalGpuSpec(
-            name=str(gpu_data.get("name", "H100")),
-            count=int(gpu_data.get("count", 1)),
-        )
-        timeouts = ModalTimeoutSpec(
-            process_seconds=int(timeout_data.get("process_seconds", 120))
-        ).clamp()
+        image = _resolve_image(image_data)
+        gpu = _resolve_gpu(gpu_data)
+        timeouts = _resolve_timeouts(timeout_data)
 
         return cls(
             yaml_path=yaml_path,
@@ -92,6 +85,57 @@ class ModalRawConfig:
             gpu=gpu,
             timeouts=timeouts,
         )
+
+
+def _resolve_image(image_data: dict[str, Any]) -> ModalImageSpec:
+    cuda_version = str(image_data.get("cuda_version") or "12.8.1")
+    os_tag = str(image_data.get("os_tag") or "ubuntu24.04")
+    python_version = str(image_data.get("python_version") or "3.12")
+    return ModalImageSpec(
+        cuda_version=cuda_version,
+        os_tag=os_tag,
+        python_version=python_version,
+    )
+
+
+def _resolve_gpu(gpu_data: dict[str, Any]) -> ModalGpuSpec:
+    env_gpu = os.environ.get("KB3_MODAL_GPU_NAME")
+    configured_name = gpu_data.get("name") or env_gpu or default_gpu_name()
+    spec = gpu_spec(str(configured_name))
+
+    count_value = gpu_data.get("count") or os.environ.get("KB3_MODAL_GPU_COUNT") or spec_count_default()
+    try:
+        count = int(count_value)
+    except (TypeError, ValueError):
+        count = 1
+    if count <= 0:
+        count = 1
+
+    return ModalGpuSpec(name=spec.name, count=count)
+
+
+def _resolve_timeouts(timeout_data: dict[str, Any]) -> ModalTimeoutSpec:
+    process_seconds = timeout_data.get("process_seconds")
+    if process_seconds is None:
+        env_override = os.environ.get("KB3_MODAL_TIMEOUT_SECONDS")
+        process_seconds = env_override if env_override is not None else 120
+    try:
+        seconds = int(process_seconds)
+    except (TypeError, ValueError):
+        seconds = 120
+    return ModalTimeoutSpec(process_seconds=seconds).clamp()
+
+
+def spec_count_default() -> int:
+    env_default = os.environ.get("KB3_MODAL_GPU_COUNT_DEFAULT")
+    if env_default is not None:
+        try:
+            value = int(env_default)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return 1
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

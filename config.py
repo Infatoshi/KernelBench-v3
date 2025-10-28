@@ -8,8 +8,12 @@ KernelLanguage = Literal["cuda", "triton"]
 
 @dataclass
 class HardwareConfig:
+    gpu_name: str = "A100"
     gpu_architecture: str = "Ampere"
     gpu_id: int = 0
+    gpu_memory_gb: int | None = None
+    gpu_memory_type: str | None = None
+    tensor_core_generation: str | None = None
 
 
 @dataclass

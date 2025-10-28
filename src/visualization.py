@@ -294,17 +294,33 @@ def generate_comparison_charts(yaml_config: Dict[str, Any], batch_results: List[
     print(f"✅ Visualizations saved to: {plots_dir}")
 
 
+def _infer_metrics_to_plot(model_metrics: List[Dict[str, Any]]) -> List[str]:
+    """Return sorted metric keys suitable for visualization."""
+    numeric_keys: List[str] = []
+    excluded = {"model", "provider", "model_name", "mode", "language", "status"}
+    for record in model_metrics:
+        for key, value in record.items():
+            if key in excluded:
+                continue
+            if isinstance(value, (int, float)):
+                if key not in numeric_keys:
+                    numeric_keys.append(key)
+    return numeric_keys
+
+
 def generate_bar_chart(model_metrics: List[Dict[str, Any]], output_dir: Path, viz_config: Dict[str, Any]) -> None:
     """Generate bar chart comparing models across key metrics."""
     
     if not model_metrics:
         return
     
-    metrics_to_plot = viz_config.get("metrics", [
-        "compilation_rate",
-        "correctness_rate",
-        "fast_1_rate",
-    ])
+    configured_metrics = viz_config.get("metrics")
+    if configured_metrics:
+        metrics_to_plot = configured_metrics
+    else:
+        metrics_to_plot = _infer_metrics_to_plot(model_metrics)
+    if not metrics_to_plot:
+        return
     
     models = [m["model"] for m in model_metrics]
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
