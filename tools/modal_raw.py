@@ -74,6 +74,12 @@ CONFIG_ENV = os.environ.get("KB3_MODAL_CONFIG_PATH", "configs/modal_raw.yaml")
 CONFIG_PATH = Path(CONFIG_ENV)
 if not CONFIG_PATH.is_absolute():
     CONFIG_PATH = REPO_ROOT / CONFIG_PATH
+try:
+    CONFIG_PATH_WITHIN_REPO = CONFIG_PATH.relative_to(REPO_ROOT)
+except ValueError as exc:  # pragma: no cover - malformed config location
+    raise RuntimeError(
+        f"Modal config must reside inside the repository: {CONFIG_PATH}"
+    ) from exc
 MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
 TIMEOUT = MODAL_CONFIG.timeouts.process_seconds
 _GROQ_SECRET_ATTACHED = False
@@ -189,8 +195,9 @@ def run_raw_eval() -> None:
         print("[modal/raw] WARNING: GROQ_API_KEY is not set inside the Modal task.")
 
     _run_subprocess(["uv", "sync"], cwd=workdir)
+    config_arg = str(CONFIG_PATH_WITHIN_REPO)
     _run_subprocess(
-        ["uv", "run", "python", "eval.py", "--config", "configs/modal_raw.yaml"],
+        ["uv", "run", "python", "eval.py", "--config", config_arg],
         cwd=workdir,
     )
     print("[modal/raw] run complete; artifacts are in /tmp/kernelbench/runs")
