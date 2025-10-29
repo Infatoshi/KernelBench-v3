@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNS_DIR = PROJECT_ROOT / "runs"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_LOCAL_KERNEL_DIR = PROJECT_ROOT / "outputs" / "local_kernels"
 
 _CPU_STATE: Dict[str, Any] = {}
 
@@ -93,6 +94,26 @@ def _close_bar(bar: tqdm | None) -> None:
 
 def sanitize_component(value: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
+
+
+def local_candidate_json_path(base_dir: Path | None, config: "BenchmarkConfig", level: int, problem_id: int) -> Path:
+    if base_dir is None:
+        raise ValueError("Local generation directory is not configured.")
+    mode_safe = sanitize_component(str(getattr(config, "mode", "raw")))
+    language_safe = sanitize_component(str(getattr(config, "language", "cuda")))
+    provider_safe = sanitize_component(str(getattr(config, "provider", "local")))
+    model_id = str(getattr(config, "generator_model", "kernel"))
+    model_safe = sanitize_component(model_id.replace("/", "_"))
+    filename = f"problem_{problem_id:04d}.json"
+    return (
+        base_dir
+        / mode_safe
+        / language_safe
+        / provider_safe
+        / model_safe
+        / f"level{level}"
+        / filename
+    )
 
 
 def build_provider(config: "BenchmarkConfig"):
@@ -273,8 +294,27 @@ def _cpu_initializer(
         "profile_enabled": config.profile_stages,
         "build_root": build_root,
     }
-    _CPU_STATE["inference_fn"] = build_inference_callable(config)
-    _CPU_STATE["formatter_fn"] = build_formatter_callable(config)
+    env_generation_mode = os.environ.get("KB3_FORCE_GENERATION_MODE")
+    generation_mode = env_generation_mode or getattr(getattr(config, "generation", None), "mode", "local")
+    generation_mode = str(generation_mode).lower().strip() or "local"
+    _CPU_STATE["generation_mode"] = generation_mode
+    env_local_dir = os.environ.get("KB3_LOCAL_KERNEL_DIR")
+    local_dir_setting = env_local_dir or getattr(getattr(config, "generation", None), "local_dir", None)
+    if local_dir_setting:
+        local_dir_path = Path(local_dir_setting)
+        if not local_dir_path.is_absolute():
+            local_dir_path = PROJECT_ROOT / local_dir_path
+    else:
+        local_dir_path = DEFAULT_LOCAL_KERNEL_DIR
+    if generation_mode == "local":
+        _CPU_STATE["local_generation_dir"] = local_dir_path
+        _CPU_STATE["inference_fn"] = None
+        _CPU_STATE["formatter_fn"] = None
+        _CPU_STATE["local_info_logged"] = False
+    else:
+        _CPU_STATE["local_generation_dir"] = None
+        _CPU_STATE["inference_fn"] = build_inference_callable(config)
+        _CPU_STATE["formatter_fn"] = build_formatter_callable(config)
 
 
 def _prepare_problem(level: int, problem_id: int, config: "BenchmarkConfig", inference_fn) -> Dict[str, Any]:
@@ -321,6 +361,33 @@ def _prepare_problem(level: int, problem_id: int, config: "BenchmarkConfig", inf
     }
 
 
+def _prepare_problem_local(level: int, problem_id: int, config: "BenchmarkConfig", base_dir: Path) -> Dict[str, Any]:
+    ref_arch_src, problem_name = load_reference(level, problem_id)
+    json_path = local_candidate_json_path(base_dir, config, level, problem_id)
+    if not json_path.exists():
+        raise FileNotFoundError(
+            f"Local kernel payload missing for level {level} problem {problem_id}: {json_path}"
+        )
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    generated = payload.get("generated_code")
+    if not generated:
+        raise ValueError(
+            f"Local kernel payload {json_path} does not contain 'generated_code'."
+        )
+    return {
+        "level": level,
+        "problem_id": problem_id,
+        "problem_name": problem_name,
+        "ref_arch_src": ref_arch_src,
+        "prompt": payload.get("prompt"),
+        "generated_code": generated,
+        "raw_completion": payload.get("raw_completion"),
+        "formatted_completion": payload.get("formatted_completion"),
+        "local_payload_path": str(json_path),
+        "metadata": payload.get("metadata"),
+    }
+
+
 def _cpu_prepare_problem(problem_id: int) -> Dict[str, Any]:
     if not _CPU_STATE:
         raise RuntimeError("CPU worker state has not been initialized")
@@ -329,7 +396,9 @@ def _cpu_prepare_problem(problem_id: int) -> Dict[str, Any]:
     level = _CPU_STATE["generation_level"]
     queue = _CPU_STATE["queue"]
     results_store = _CPU_STATE["results"]
+    generation_mode = _CPU_STATE.get("generation_mode", "llm")
     inference_fn = _CPU_STATE.get("inference_fn")
+    local_dir: Path | None = _CPU_STATE.get("local_generation_dir")
     profile_enabled = _CPU_STATE.get("profile_enabled", False)
     build_root: Path = _CPU_STATE.get("build_root")
 
@@ -337,11 +406,21 @@ def _cpu_prepare_problem(problem_id: int) -> Dict[str, Any]:
     cpu_start = perf_counter()
 
     try:
-        if inference_fn is None:
-            raise RuntimeError("Inference function not initialized")
-
         prepare_start = perf_counter()
-        candidate = _prepare_problem(level, problem_id, config, inference_fn)
+        if generation_mode == "local":
+            if local_dir is None:
+                raise RuntimeError("Local generation directory not configured for CPU worker")
+            if not _CPU_STATE.get("local_info_logged"):
+                print(
+                    "[Raw] Loading pre-generated kernels from",
+                    Path(local_dir).resolve(),
+                )
+                _CPU_STATE["local_info_logged"] = True
+            candidate = _prepare_problem_local(level, problem_id, config, local_dir)
+        else:
+            if inference_fn is None:
+                raise RuntimeError("Inference function not initialized")
+            candidate = _prepare_problem(level, problem_id, config, inference_fn)
         if cpu_profile is not None:
             cpu_profile["cpu_prepare_s"] = perf_counter() - prepare_start
         if cpu_profile is not None:

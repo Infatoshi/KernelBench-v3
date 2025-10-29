@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tarfile
+from io import BytesIO
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -100,7 +102,11 @@ os.environ.setdefault("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH)
 MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
 os.environ.setdefault("KB3_MODAL_GPU_NAME", MODAL_CONFIG.gpu.name)
 os.environ.setdefault("KB3_MODAL_GPU_COUNT", str(MODAL_CONFIG.gpu.count))
+os.environ.setdefault("KB3_MODAL_TIMEOUT_SECONDS", os.environ.get("KB3_MODAL_TIMEOUT_SECONDS", "0"))
+if "KB3_LOCAL_KERNEL_DIR" in os.environ:
+    os.environ.setdefault("KB3_LOCAL_KERNEL_DIR", os.environ["KB3_LOCAL_KERNEL_DIR"])
 TIMEOUT = MODAL_CONFIG.timeouts.process_seconds
+_FUNCTION_TIMEOUT = MODAL_CONFIG.timeouts.modal_function_timeout()
 _GROQ_SECRET_ATTACHED = False
 
 
@@ -181,6 +187,8 @@ image = (
             "KB3_MODAL_CONFIG_PATH": CONFIG_PATH_RELPATH,
             "KB3_MODAL_GPU_NAME": MODAL_CONFIG.gpu.name,
             "KB3_MODAL_GPU_COUNT": str(MODAL_CONFIG.gpu.count),
+            "KB3_MODAL_TIMEOUT_SECONDS": os.environ.get("KB3_MODAL_TIMEOUT_SECONDS", "0"),
+            "KB3_LOCAL_KERNEL_DIR": os.environ.get("KB3_LOCAL_KERNEL_DIR", ""),
         }
     )
     .run_commands(*_ensure_uv_installed_commands())
@@ -194,12 +202,39 @@ _function_kwargs: dict[str, object] = {
     "gpu": MODAL_CONFIG.gpu.to_modal_argument(),
 }
 
+_function_kwargs["timeout"] = _FUNCTION_TIMEOUT
+_function_kwargs["startup_timeout"] = _FUNCTION_TIMEOUT
+
+_modal_secrets: list[modal.Secret] = []
+
+try:
+    _modal_secrets.append(modal.Secret.from_name("kb3-llm-keys"))
+except Exception as exc:  # noqa: BLE001
+    print(f"[modal/raw] WARNING: unable to attach kb3-llm-keys secret: {exc}")
+
 if "GROQ_API_KEY" in os.environ:
     try:
-        _function_kwargs["secrets"] = [modal.Secret.from_local_environ(["GROQ_API_KEY"])]
+        _modal_secrets.append(modal.Secret.from_local_environ(["GROQ_API_KEY"]))
         _GROQ_SECRET_ATTACHED = True
     except Exception as exc:  # noqa: BLE001
         print(f"[modal/raw] WARNING: failed to attach GROQ_API_KEY secret: {exc}")
+
+if _modal_secrets:
+    _function_kwargs["secrets"] = _modal_secrets
+
+def _pack_artifacts(base_dir: Path) -> bytes | None:
+    candidates = ["outputs", "runs"]
+    buffer = BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        added = False
+        for rel in candidates:
+            path = base_dir / rel
+            if path.exists():
+                archive.add(path, arcname=rel)
+                added = True
+        if not added:
+            return None
+    return buffer.getvalue()
 
 
 @app.function(**_function_kwargs)
@@ -215,6 +250,9 @@ def run_raw_eval() -> None:
     workdir = Path("/tmp/kernelbench")
 
     _rsync_repo(repo_src, workdir)
+    local_kernel_dir = os.environ.get("KB3_LOCAL_KERNEL_DIR")
+    if local_kernel_dir:
+        print(f"[modal/raw] using local kernels from {local_kernel_dir}")
     if os.environ.get("GROQ_API_KEY"):
         print("[modal/raw] GROQ_API_KEY detected in environment for remote run.")
     else:
@@ -228,6 +266,10 @@ def run_raw_eval() -> None:
         cwd=workdir,
     )
     print("[modal/raw] run complete; artifacts are in /tmp/kernelbench/runs")
+    artifacts_blob = _pack_artifacts(workdir)
+    return {
+        "artifacts_tar_gz": artifacts_blob,
+    }
 
 
 @app.local_entrypoint()
@@ -246,4 +288,14 @@ def main() -> None:
             "[modal/raw] WARNING: GROQ_API_KEY secret not forwarded; set GROQ_API_KEY before running."
         )
     nvcc_version.remote()
-    run_raw_eval.remote()
+    result = run_raw_eval.remote()
+    artifacts_blob = None
+    if isinstance(result, dict):
+        artifacts_blob = result.get("artifacts_tar_gz")
+    if artifacts_blob:
+        buffer = BytesIO(artifacts_blob)
+        with tarfile.open(fileobj=buffer, mode="r:gz") as archive:
+            archive.extractall(path=REPO_ROOT)
+        print("[modal/raw] Artifacts unpacked into", REPO_ROOT)
+    else:
+        print("[modal/raw] WARNING: No artifacts returned by remote run.")

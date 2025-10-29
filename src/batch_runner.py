@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
-from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig
+from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig, GenerationConfig
 from hardware.specs import default_gpu_name, gpu_spec
 from metrics import load_metrics, save_metrics
 from providers import verify_model_responds_hello
@@ -73,6 +73,8 @@ def _verify_provider_models(
     unique_targets: List[Tuple[str, str, str | None]] = []
     for mode, language, model_entry in run_plan:
         config = yaml_to_benchmark_config(yaml_data, model_entry, mode, language, cli_overrides)
+        if getattr(config.generation, "mode", "llm") == "local":
+            continue
         key = (
             config.provider.lower(),
             config.generator_model,
@@ -247,6 +249,55 @@ def yaml_to_benchmark_config(
     if formatter_max_tokens is not None:
         formatter_max_tokens = int(formatter_max_tokens)
 
+    generation_defaults = defaults.get("generation", {}) if isinstance(defaults, dict) else {}
+    yaml_generation = yaml_data.get("generation", {}) or {}
+    if not isinstance(yaml_generation, dict):
+        yaml_generation = {}
+    if not isinstance(generation_defaults, dict):
+        generation_defaults = {}
+    model_generation = model_entry.get("generation", {}) or {}
+    if not isinstance(model_generation, dict):
+        model_generation = {}
+
+    def _first_value(*candidates):
+        for candidate in candidates:
+            if candidate is not None:
+                return candidate
+        return None
+
+    generation_mode_value = _first_value(
+        model_generation.get("mode"),
+        yaml_generation.get("mode"),
+        generation_defaults.get("mode"),
+    )
+    if generation_mode_value is None:
+        generation_mode_value = GenerationConfig().mode
+    generation_mode = str(generation_mode_value).lower().strip()
+    if generation_mode not in {"llm", "local"}:
+        generation_mode = "llm"
+
+    generation_local_dir_value = _first_value(
+        model_generation.get("local_dir"),
+        yaml_generation.get("local_dir"),
+        generation_defaults.get("local_dir"),
+    )
+    if generation_local_dir_value is None:
+        generation_local_dir_value = GenerationConfig().local_dir
+    generation_local_dir = (
+        str(generation_local_dir_value)
+        if generation_local_dir_value is not None and str(generation_local_dir_value).strip()
+        else None
+    )
+
+    reuse_existing_value = _first_value(
+        model_generation.get("reuse_existing"),
+        yaml_generation.get("reuse_existing"),
+        generation_defaults.get("reuse_existing"),
+    )
+    if reuse_existing_value is None:
+        reuse_existing_value = GenerationConfig().reuse_existing
+    reuse_existing = bool(reuse_existing_value)
+
     if "formatter_provider" in cli_overrides:
         formatter_provider = cli_overrides["formatter_provider"]
     if "formatter_model" in cli_overrides:
@@ -273,6 +324,11 @@ def yaml_to_benchmark_config(
         hardware=hardware,
         problems=problems,
         agentic=agentic_cfg,
+        generation=GenerationConfig(
+            mode="local" if generation_mode == "local" else "llm",
+            local_dir=generation_local_dir,
+            reuse_existing=reuse_existing,
+        ),
         fast_p_threshold=yaml_data.get("fast_p_threshold", defaults.get("fast_p_threshold")),
         raw_concurrency=raw_concurrency,
         raw_gpu_concurrency=raw_gpu_concurrency,

@@ -21,6 +21,35 @@ print(os.path.relpath(abs_path, repo_root))
 PY
 )
 
+GENERATION_REQUIREMENT=$(uv run python - "${CONFIG_ABS}" <<'PY'
+import sys, yaml
+config_path = sys.argv[1]
+with open(config_path, "r", encoding="utf-8") as handle:
+    data = yaml.safe_load(handle) or {}
+models = data.get("models") or []
+defaults = data.get("defaults") or {}
+defaults_generation = defaults.get("generation") or {}
+global_generation = data.get("generation") or {}
+need_keys = False
+for model in models:
+    merged = {}
+    merged.update(defaults_generation)
+    merged.update(global_generation)
+    merged.update(model.get("generation") or {})
+    mode = (merged.get("mode") or "local")
+    if str(mode).strip().lower() != "local":
+        need_keys = True
+        break
+print("require_keys" if need_keys else "skip_keys")
+PY
+)
+if [ "${GENERATION_REQUIREMENT}" = "skip_keys" ]; then
+  SKIP_PROVIDER_KEYS=1
+  echo "[setup] Provider keys not required (using local kernel generation)."
+else
+  SKIP_PROVIDER_KEYS=0
+fi
+
 UV_TIMEOUT=${UV_TIMEOUT:-120}
 MODAL_TOKEN_TIMEOUT=${MODAL_TOKEN_TIMEOUT:-120}
 
@@ -51,8 +80,9 @@ cd "${REPO_ROOT}"
 echo "[setup] Synchronizing project dependencies with uv..."
 with_timeout "${UV_TIMEOUT}" uv sync
 
-echo "[setup] Validating provider API credentials for ${CONFIG_REL}..."
-if ! with_timeout "${UV_TIMEOUT}" uv run python - <<'PY' "${CONFIG_REL}" "${REPO_ROOT}"; then
+if [ "${SKIP_PROVIDER_KEYS}" != "1" ]; then
+  echo "[setup] Validating provider API credentials for ${CONFIG_REL}..."
+  if ! with_timeout "${UV_TIMEOUT}" uv run python - <<'PY' "${CONFIG_REL}" "${REPO_ROOT}"; then
 import sys
 from pathlib import Path
 
@@ -119,11 +149,13 @@ if providers:
 else:
     print("[setup] No provider API keys required by configuration.")
 PY
-  echo "[setup] Provider API credential check failed." >&2
-  exit 1
+    echo "[setup] Provider API credential check failed." >&2
+    exit 1
+  fi
+  echo "[setup] Provider API credentials verified."
+else
+  echo "[setup] Skipping provider API credential validation."
 fi
-
-echo "[setup] Provider API credentials verified."
 
 echo "[setup] Checking Modal auth token..."
 if with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run python - <<'PY'
@@ -137,6 +169,57 @@ else
   echo "[setup] No Modal token detected; launching interactive 'modal token new'."
   with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run modal token new
 fi
+
+if [ "${SKIP_PROVIDER_KEYS}" != "1" ]; then
+  echo "[setup] Ensuring Modal secret kb3-llm-keys exists..."
+  for var in GEMINI_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY XAI_API_KEY GROQ_API_KEY; do
+    if [ -z "${!var:-}" ]; then
+      echo "[setup] Missing required env var: ${var}" >&2
+      exit 1
+    fi
+  done
+  if with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run modal secret get kb3-llm-keys >/dev/null 2>&1; then
+    echo "[setup] Updating existing Modal secret kb3-llm-keys..."
+  else
+    echo "[setup] Creating Modal secret kb3-llm-keys..."
+  fi
+  with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run -- modal secret create --force kb3-llm-keys \
+    "GEMINI_API_KEY=${GEMINI_API_KEY}" \
+    "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" \
+    "OPENAI_API_KEY=${OPENAI_API_KEY}" \
+    "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}" \
+    "XAI_API_KEY=${XAI_API_KEY}" \
+    "GROQ_API_KEY=${GROQ_API_KEY}"
+else
+  echo "[setup] Skipping Modal secret provisioning."
+fi
+
+export KB3_MODAL_TIMEOUT_SECONDS="${KB3_MODAL_TIMEOUT_SECONDS:-0}"
+
+echo "[setup] Precomputing local kernels for ${CONFIG_REL}..."
+LOCAL_KERNEL_OUTPUT=$(uv run python scripts/generate_local_kernels.py "${CONFIG_REL}")
+echo "${LOCAL_KERNEL_OUTPUT}"
+KB3_LOCAL_KERNEL_DIR=$(printf '%s\n' "${LOCAL_KERNEL_OUTPUT}" | awk -F= '/^LOCAL_KERNEL_DIR=/{print $2}')
+if [ -z "${KB3_LOCAL_KERNEL_DIR}" ]; then
+  echo "[setup] Failed to determine local kernel directory." >&2
+  exit 1
+fi
+KB3_LOCAL_KERNEL_DIR=$(python3 - "${KB3_LOCAL_KERNEL_DIR}" "${REPO_ROOT}" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+root = sys.argv[2]
+try:
+    rel = os.path.relpath(path, root)
+    if rel.startswith("../"):
+        raise ValueError
+    print(rel)
+except Exception:
+    print(path)
+PY
+)
+export KB3_LOCAL_KERNEL_DIR
 
 echo "[setup] Launching Modal raw evaluation for ${CONFIG_REL}..."
 KB3_MODAL_CONFIG_PATH="${CONFIG_REL}" uv run modal run tools/modal_raw.py

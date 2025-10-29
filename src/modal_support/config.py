@@ -39,20 +39,30 @@ class ModalGpuSpec:
         return self.name
 
 
+MODAL_FUNCTION_TIMEOUT_MIN = 10
+MODAL_FUNCTION_TIMEOUT_MAX = 24 * 60 * 60  # 24 hours
+
+
 @dataclass(frozen=True)
 class ModalTimeoutSpec:
     """Timeout settings for Modal subprocess management."""
 
-    process_seconds: int = 120
+    process_seconds: int = 0
 
-    def clamp(self) -> "ModalTimeoutSpec":
-        """Enforce an upper bound of 120 seconds by default."""
-        # Modal workloads can be long, but scripts must default to <=120 seconds.
+    def normalized(self) -> "ModalTimeoutSpec":
+        """Coerce negative values to zero while leaving positive values unchanged."""
         seconds = int(self.process_seconds)
         if seconds <= 0:
             return ModalTimeoutSpec(process_seconds=0)
-        bounded = max(1, min(seconds, 120))
-        return ModalTimeoutSpec(process_seconds=bounded)
+        return ModalTimeoutSpec(process_seconds=seconds)
+
+    def modal_function_timeout(self) -> int:
+        """Return a Modal-compatible execution timeout in seconds."""
+        seconds = int(self.process_seconds)
+        if seconds <= 0:
+            return MODAL_FUNCTION_TIMEOUT_MAX
+        bounded = max(MODAL_FUNCTION_TIMEOUT_MIN, min(seconds, MODAL_FUNCTION_TIMEOUT_MAX))
+        return bounded
 
 
 @dataclass(frozen=True)
@@ -118,12 +128,12 @@ def _resolve_timeouts(timeout_data: dict[str, Any]) -> ModalTimeoutSpec:
     process_seconds = timeout_data.get("process_seconds")
     if process_seconds is None:
         env_override = os.environ.get("KB3_MODAL_TIMEOUT_SECONDS")
-        process_seconds = env_override if env_override is not None else 120
+        process_seconds = env_override if env_override is not None else 0
     try:
         seconds = int(process_seconds)
     except (TypeError, ValueError):
-        seconds = 120
-    return ModalTimeoutSpec(process_seconds=seconds).clamp()
+        seconds = 0
+    return ModalTimeoutSpec(process_seconds=seconds).normalized()
 
 
 def spec_count_default() -> int:

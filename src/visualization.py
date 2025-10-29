@@ -254,6 +254,24 @@ def collect_metrics_for_visualization(
         if status not in {"completed", "cached"}:
             label = f"{label} [{status.upper()}]"
 
+        metrics_copy = dict(metrics)
+        elapsed = entry.get("elapsed_seconds")
+        total_problems = (
+            metrics_copy.get("total_problems")
+            or metrics_copy.get("total")
+            or entry.get("evaluated_problems")
+            or 0
+        )
+        if elapsed is not None:
+            try:
+                elapsed_value = float(elapsed)
+            except (TypeError, ValueError):
+                elapsed_value = None
+            if elapsed_value is not None:
+                metrics_copy["elapsed_seconds"] = elapsed_value
+                if total_problems:
+                    metrics_copy["seconds_per_problem"] = elapsed_value / float(total_problems)
+
         metrics_records.append(
             {
                 "model": label,
@@ -262,7 +280,7 @@ def collect_metrics_for_visualization(
                 "mode": mode,
                 "language": language,
                 "status": status,
-                **metrics,
+                **metrics_copy,
             }
         )
 

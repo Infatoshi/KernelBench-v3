@@ -1,0 +1,4 @@
+compilation: fail
+  reason: ModelNew class not produced from custom CUDA kernel
+correctness: fail
+performance: n/a

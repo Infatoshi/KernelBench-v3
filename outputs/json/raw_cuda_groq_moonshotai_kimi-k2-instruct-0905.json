@@ -1,0 +1,20 @@
+{
+  "artifacts": {
+    "manifest": "/tmp/kernelbench/runs/20251028_123823_raw_cuda_groq_moonshotai_kimi-k2-instruct-0905/manifest.yaml",
+    "run_dir": "/tmp/kernelbench/runs/20251028_123823_raw_cuda_groq_moonshotai_kimi-k2-instruct-0905"
+  },
+  "config_fingerprint": "e357516af8c184fb4269710817aef95dd8ae427a758903b77c6ee0d41eea08a2",
+  "elapsed_seconds": 744.9,
+  "language": "cuda",
+  "metrics": {
+    "compilation_rate": 0.0,
+    "compiled_count": 0,
+    "correct_count": 0,
+    "correctness_rate": 0.0,
+    "total": 100
+  },
+  "mode": "raw",
+  "model": "moonshotai/kimi-k2-instruct-0905",
+  "provider": "groq",
+  "timestamp": "2025-10-28T12:50:48.947290"
+}

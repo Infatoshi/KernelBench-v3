@@ -31,7 +31,7 @@ modal:
     name: "H100"
     count: 1
   timeouts:
-    process_seconds: 120
+    process_seconds: 0
 
 artifacts:
   json_dir: json
@@ -42,6 +42,6 @@ hardware:
   gpu_id: 0
 
 problems:
-  levels: [1]
+  levels: [1, 2]
   problem_ids: null
-  max_problems: 1
+  max_problems: null

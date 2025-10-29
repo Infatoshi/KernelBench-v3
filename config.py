@@ -4,6 +4,7 @@ import os
 
 EvaluationMode = Literal["raw", "agentic"]
 KernelLanguage = Literal["cuda", "triton"]
+GenerationMode = Literal["llm", "local"]
 
 
 @dataclass
@@ -37,6 +38,13 @@ def _cpu_worker_default() -> int:
 
 
 @dataclass
+class GenerationConfig:
+    mode: GenerationMode = "local"
+    local_dir: str | None = None
+    reuse_existing: bool = True
+
+
+@dataclass
 class BenchmarkConfig:
     mode: EvaluationMode = "raw"
     language: KernelLanguage = "triton"
@@ -52,6 +60,7 @@ class BenchmarkConfig:
     hardware: HardwareConfig = field(default_factory=HardwareConfig)
     problems: ProblemSetConfig = field(default_factory=ProblemSetConfig)
     agentic: AgenticConfig = field(default_factory=AgenticConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
     fast_p_threshold: float | None = None
     raw_concurrency: int = field(default_factory=_cpu_worker_default)
     raw_gpu_concurrency: int = 1

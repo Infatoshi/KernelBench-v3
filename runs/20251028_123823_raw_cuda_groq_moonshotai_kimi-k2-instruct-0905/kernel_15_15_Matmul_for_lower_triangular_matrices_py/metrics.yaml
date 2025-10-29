@@ -1,0 +1,22 @@
+compiled: false
+correctness: false
+runtime_ms: -1.0
+runtime_stats: null
+profiling:
+  times_s:
+    cpu_total_s: 0.000999
+    cpu_prepare_s: 0.000998
+    queue_wait_s: 115.979077
+    gpu_total_s: 0.001953
+    load_reference_s: 0.001598
+    compile_s: 0.000331
+    total_s: 115.982028
+  percentages:
+    cpu_total_pct: 0.0009
+    queue_wait_pct: 99.9975
+    gpu_total_pct: 0.0017
+metadata:
+  hardware: NVIDIA A100-SXM4-40GB
+  device: cuda:0
+  compilation_error: ModelNew class not produced from custom CUDA kernel
+  error_category: cuda_compilation_error

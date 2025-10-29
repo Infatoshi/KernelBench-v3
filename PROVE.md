@@ -34552,6 +34552,140 @@ diff --git a/tools/modal_raw.py b/tools/modal_raw.py
 ## validate
 - `uv run python -m compileall tools/modal_raw.py`
 
+# 2025-10-28 Extend Modal function timeout
+
+## rationale
+Extend Modal function and startup timeouts beyond the 300s default so long-running benchmarks can finish when YAML/environment request unlimited runtimes.
+
+## patch
+```diff
+diff --git a/src/modal_support/config.py b/src/modal_support/config.py
+@@
+-@dataclass(frozen=True)
+-class ModalTimeoutSpec:
+-    """Timeout settings for Modal subprocess management."""
+-
+-    process_seconds: int = 0
+-
+-    def normalized(self) -> "ModalTimeoutSpec":
+-        """Coerce negative values to zero while leaving positive values unchanged."""
+-        seconds = int(self.process_seconds)
+-        if seconds <= 0:
+-            return ModalTimeoutSpec(process_seconds=0)
+-        return ModalTimeoutSpec(process_seconds=seconds)
++MODAL_FUNCTION_TIMEOUT_MIN = 10
++MODAL_FUNCTION_TIMEOUT_MAX = 24 * 60 * 60  # 24 hours
++
++@dataclass(frozen=True)
++class ModalTimeoutSpec:
++    """Timeout settings for Modal subprocess management."""
++
++    process_seconds: int = 0
++
++    def normalized(self) -> "ModalTimeoutSpec":
++        """Coerce negative values to zero while leaving positive values unchanged."""
++        seconds = int(self.process_seconds)
++        if seconds <= 0:
++            return ModalTimeoutSpec(process_seconds=0)
++        return ModalTimeoutSpec(process_seconds=seconds)
++
++    def modal_function_timeout(self) -> int:
++        """Return a Modal-compatible execution timeout in seconds."""
++        seconds = int(self.process_seconds)
++        if seconds <= 0:
++            return MODAL_FUNCTION_TIMEOUT_MAX
++        bounded = max(MODAL_FUNCTION_TIMEOUT_MIN, min(seconds, MODAL_FUNCTION_TIMEOUT_MAX))
++        return bounded
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+-TIMEOUT = MODAL_CONFIG.timeouts.process_seconds
+-_GROQ_SECRET_ATTACHED = False
++TIMEOUT = MODAL_CONFIG.timeouts.process_seconds
++_FUNCTION_TIMEOUT = MODAL_CONFIG.timeouts.modal_function_timeout()
++_GROQ_SECRET_ATTACHED = False
+@@
+-_function_kwargs: dict[str, object] = {
+-    "image": image,
+-    "gpu": MODAL_CONFIG.gpu.to_modal_argument(),
+-}
++_function_kwargs: dict[str, object] = {
++    "image": image,
++    "gpu": MODAL_CONFIG.gpu.to_modal_argument(),
++}
++
++_function_kwargs["timeout"] = _FUNCTION_TIMEOUT
++_function_kwargs["startup_timeout"] = _FUNCTION_TIMEOUT
+```
+
+## validate
+- `uv run python -m compileall src/modal_support/config.py tools/modal_raw.py`
+
+# 2025-10-28 Remove subprocess timeout clamp
+
+## rationale
+Allow Modal raw and agentic runs to inherit long-running timeouts from YAML configs or environment overrides without being truncated at 120 seconds.
+
+## patch
+```diff
+diff --git a/src/modal_support/config.py b/src/modal_support/config.py
+@@
+-class ModalTimeoutSpec:
+-    """Timeout settings for Modal subprocess management."""
+-
+-    process_seconds: int = 120
+-
+-    def clamp(self) -> "ModalTimeoutSpec":
+-        """Enforce an upper bound of 120 seconds by default."""
+-        # Modal workloads can be long, but scripts must default to <=120 seconds.
+-        seconds = int(self.process_seconds)
+-        if seconds <= 0:
+-            return ModalTimeoutSpec(process_seconds=0)
+-        bounded = max(1, min(seconds, 120))
+-        return ModalTimeoutSpec(process_seconds=bounded)
++class ModalTimeoutSpec:
++    """Timeout settings for Modal subprocess management."""
++
++    process_seconds: int = 0
++
++    def normalized(self) -> "ModalTimeoutSpec":
++        """Coerce negative values to zero while leaving positive values unchanged."""
++        seconds = int(self.process_seconds)
++        if seconds <= 0:
++            return ModalTimeoutSpec(process_seconds=0)
++        return ModalTimeoutSpec(process_seconds=seconds)
+@@
+-    process_seconds = timeout_data.get("process_seconds")
+-    if process_seconds is None:
+-        env_override = os.environ.get("KB3_MODAL_TIMEOUT_SECONDS")
+-        process_seconds = env_override if env_override is not None else 120
++    process_seconds = timeout_data.get("process_seconds")
++    if process_seconds is None:
++        env_override = os.environ.get("KB3_MODAL_TIMEOUT_SECONDS")
++        process_seconds = env_override if env_override is not None else 0
+@@
+-        seconds = int(process_seconds)
+-    except (TypeError, ValueError):
+-        seconds = 120
+-    return ModalTimeoutSpec(process_seconds=seconds).clamp()
++        seconds = int(process_seconds)
++    except (TypeError, ValueError):
++        seconds = 0
++    return ModalTimeoutSpec(process_seconds=seconds).normalized()
+diff --git a/configs/modal_raw.yaml b/configs/modal_raw.yaml
+@@
+   timeouts:
+-    process_seconds: 120
++    process_seconds: 0
+diff --git a/configs/all_providers_raw.yaml b/configs/all_providers_raw.yaml
+@@
+   timeouts:
+-    process_seconds: 120
++    process_seconds: 0
+```
+
+## validate
+- `uv run python -m compileall src/modal_support/config.py`
+
 # 2025-10-28 GPU hardware catalog
 
 ## rationale
@@ -34966,34 +35100,7 @@ diff --git a/tools/modal_raw.py b/tools/modal_raw.py
 index 2a19763..8a82462 100644
 --- a/tools/modal_raw.py
 +++ b/tools/modal_raw.py
-@@
- REPO_NAME = "KernelBench-v3"
- _SRC_MARKER = Path("src") / "modal_support" / "config.py"
- 
-+def _extract_config_arg(argv: Sequence[str]) -> str | None:
-+    """Return a CLI-specified config path if present."""
-+    for idx, token in enumerate(argv[1:], start=1):
-+        if token == "--config" and idx + 1 < len(argv):
-+            return argv[idx + 1]
-+        if token.startswith("--config="):
-+            _, value = token.split("=", 1)
-+            return value
-+    return None
-+
-+
-+_CLI_CONFIG_OVERRIDE = _extract_config_arg(sys.argv)
-+if _CLI_CONFIG_OVERRIDE:
-+    os.environ["KB3_MODAL_CONFIG_PATH"] = _CLI_CONFIG_OVERRIDE
-+
-@@
--CONFIG_PATH_RELPATH = str(CONFIG_PATH_WITHIN_REPO)
--os.environ.setdefault("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH)
--MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
-+CONFIG_PATH_RELPATH = str(CONFIG_PATH_WITHIN_REPO)
-+os.environ.setdefault("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH)
-+MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
-+os.environ.setdefault("KB3_MODAL_GPU_NAME", MODAL_CONFIG.gpu.name)
-+os.environ.setdefault("KB3_MODAL_GPU_COUNT", str(MODAL_CONFIG.gpu.count))
+
 @@
 -    .apt_install("build-essential", "rsync", "curl")
 -    .pip_install("PyYAML==6.0.3")
@@ -35009,9 +35116,29 @@ index 2a19763..8a82462 100644
 +    )
 +    .run_commands(*_ensure_uv_installed_commands())
 @@
--    config_arg = str(CONFIG_PATH_WITHIN_REPO)
-+    config_arg = os.environ.get("KB3_MODAL_CONFIG_PATH", CONFIG_PATH_RELPATH) or CONFIG_PATH_RELPATH
-+    print(f"[modal/raw] invoking eval.py with --config {config_arg}")
+-
+-if "GROQ_API_KEY" in os.environ:
+-    try:
+-        _function_kwargs["secrets"] = [modal.Secret.from_local_environ(["GROQ_API_KEY"])]
+-        _GROQ_SECRET_ATTACHED = True
+-    except Exception as exc:  # noqa: BLE001
+-        print(f"[modal/raw] WARNING: failed to attach GROQ_API_KEY secret: {exc}")
++_modal_secrets: list[modal.Secret] = []
++
++try:
++    _modal_secrets.append(modal.Secret.from_name("kb3-llm-keys"))
++except Exception as exc:  # noqa: BLE001
++    print(f"[modal/raw] WARNING: unable to attach kb3-llm-keys secret: {exc}")
++
++if "GROQ_API_KEY" in os.environ:
++    try:
++        _modal_secrets.append(modal.Secret.from_local_environ(["GROQ_API_KEY"]))
++        _GROQ_SECRET_ATTACHED = True
++    except Exception as exc:  # noqa: BLE001
++        print(f"[modal/raw] WARNING: failed to attach GROQ_API_KEY secret: {exc}")
++
++if _modal_secrets:
++    _function_kwargs["secrets"] = _modal_secrets
 ```
 
 ## validate
@@ -35168,3 +35295,618 @@ index 42e7b78..97d2655 100644
 
 ## validate
 - `uv run python -m compileall src/visualization.py`
+
+
+# 2025-10-28 Ensure Modal secret for provider keys
+
+## rationale
+Guarantee Modal runs receive all provider API keys by creating/updating the `kb3-llm-keys` secret during setup.
+
+## patch
+```diff
+diff --git a/setup_and_run.sh b/setup_and_run.sh
+@@
+ echo "[setup] Checking Modal auth token..."
+ if with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run python - <<'PY'
+ import modal.config, sys
+ profiles = modal.config.config_profiles()
+ sys.exit(0 if profiles else 1)
+@@
+ else
+   echo "[setup] No Modal token detected; launching interactive 'modal token new'."
+   with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run modal token new
+ fi
++
++echo "[setup] Ensuring Modal secret kb3-llm-keys exists..."
++for var in GEMINI_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY XAI_API_KEY GROQ_API_KEY; do
++  if [ -z "${!var:-}" ]; then
++    echo "[setup] Missing required env var: ${var}" >&2
++    exit 1
++  fi
++done
++if with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run modal secret get kb3-llm-keys >/dev/null 2>&1; then
++  echo "[setup] Updating existing Modal secret kb3-llm-keys..."
++else
++  echo "[setup] Creating Modal secret kb3-llm-keys..."
++fi
++with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run -- modal secret create kb3-llm-keys +  "GEMINI_API_KEY=${GEMINI_API_KEY}" +  "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" +  "OPENAI_API_KEY=${OPENAI_API_KEY}" +  "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}" +  "XAI_API_KEY=${XAI_API_KEY}" \
+  "GROQ_API_KEY=${GROQ_API_KEY}"
+ 
+ echo "[setup] Launching Modal raw evaluation for ${CONFIG_REL}..."
+ KB3_MODAL_CONFIG_PATH="${CONFIG_REL}" uv run modal run tools/modal_raw.py
+```
+
+## validate
+- `bash setup_and_run.sh configs/all_providers_raw.yaml` (with required API key env vars exported)
+
+
+# 2025-10-28 Modal timeout env
+
+## rationale
+Prevent long Modal runs from hitting the default 120s subprocess timeout by defaulting the `KB3_MODAL_TIMEOUT_SECONDS` environment variable to 0 (no timeout).
+
+## patch
+```diff
+diff --git a/setup_and_run.sh b/setup_and_run.sh
+@@
+-with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run -- modal secret create --force kb3-llm-keys \
+-  "GEMINI_API_KEY=${GEMINI_API_KEY}" \
+-  "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" \
+-  "OPENAI_API_KEY=${OPENAI_API_KEY}" \
+-  "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}" \
+-  "XAI_API_KEY=${XAI_API_KEY}" \
+-  "GROQ_API_KEY=${GROQ_API_KEY}"
+-
+-echo "[setup] Launching Modal raw evaluation for ${CONFIG_REL}..."
+-KB3_MODAL_CONFIG_PATH="${CONFIG_REL}" uv run modal run tools/modal_raw.py
++with_timeout "${MODAL_TOKEN_TIMEOUT}" uv run -- modal secret create --force kb3-llm-keys \
++  "GEMINI_API_KEY=${GEMINI_API_KEY}" \
++  "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" \
++  "OPENAI_API_KEY=${OPENAI_API_KEY}" \
++  "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}" \
++  "XAI_API_KEY=${XAI_API_KEY}" \
++  "GROQ_API_KEY=${GROQ_API_KEY}"
++
++export KB3_MODAL_TIMEOUT_SECONDS="${KB3_MODAL_TIMEOUT_SECONDS:-0}"
++
++echo "[setup] Launching Modal raw evaluation for ${CONFIG_REL}..."
++KB3_MODAL_CONFIG_PATH="${CONFIG_REL}" uv run modal run tools/modal_raw.py
+```
+
+## validate
+- `bash setup_and_run.sh configs/all_providers_raw.yaml`
+
+# 2025-10-28 Forward timeout env to Modal
+
+## rationale
+Ensure long-running evaluations do not trip the default 120s subprocess timeout by forwarding `KB3_MODAL_TIMEOUT_SECONDS` into the Modal image and runtime env.
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+ MODAL_CONFIG = ModalRawConfig.load(CONFIG_PATH)
+ os.environ.setdefault("KB3_MODAL_GPU_NAME", MODAL_CONFIG.gpu.name)
+ os.environ.setdefault("KB3_MODAL_GPU_COUNT", str(MODAL_CONFIG.gpu.count))
++os.environ.setdefault("KB3_MODAL_TIMEOUT_SECONDS", os.environ.get("KB3_MODAL_TIMEOUT_SECONDS", "0"))
+@@
+-    .env(
+-        {
+-            "KB3_MODAL_CONFIG_PATH": CONFIG_PATH_RELPATH,
+-            "KB3_MODAL_GPU_NAME": MODAL_CONFIG.gpu.name,
+-            "KB3_MODAL_GPU_COUNT": str(MODAL_CONFIG.gpu.count),
+-        }
+-    )
++    .env(
++        {
++            "KB3_MODAL_CONFIG_PATH": CONFIG_PATH_RELPATH,
++            "KB3_MODAL_GPU_NAME": MODAL_CONFIG.gpu.name,
++            "KB3_MODAL_GPU_COUNT": str(MODAL_CONFIG.gpu.count),
++            "KB3_MODAL_TIMEOUT_SECONDS": os.environ.get("KB3_MODAL_TIMEOUT_SECONDS", "0"),
++        }
++    )
+```
+
+## validate
+- `uv run python -m compileall tools/modal_raw.py`
+
+
+# 2025-10-28 Local kernel generation pipeline
+
+## rationale
+Avoid LLM calls during raw benchmarks by precomputing kernels locally, syncing them to Modal, and loading them during remote runs.
+
+## patch
+```diff
+diff --git a/config.py b/config.py
+@@
+-EvaluationMode = Literal["raw", "agentic"]
+-KernelLanguage = Literal["cuda", "triton"]
++EvaluationMode = Literal["raw", "agentic"]
++KernelLanguage = Literal["cuda", "triton"]
++GenerationMode = Literal["llm", "local"]
+@@
+-@dataclass
+-class BenchmarkConfig:
++@dataclass
++class GenerationConfig:
++    mode: GenerationMode = "llm"
++    local_dir: str | None = None
++    reuse_existing: bool = True
++
++@dataclass
++class BenchmarkConfig:
+@@
+-    agentic: AgenticConfig = field(default_factory=AgenticConfig)
++    agentic: AgenticConfig = field(default_factory=AgenticConfig)
++    generation: GenerationConfig = field(default_factory=GenerationConfig)
+diff --git a/src/batch_runner.py b/src/batch_runner.py
+@@
+-from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig
++from config import AgenticConfig, BenchmarkConfig, HardwareConfig, ProblemSetConfig, GenerationConfig
+@@
+-        config = yaml_to_benchmark_config(yaml_data, model_entry, mode, language, cli_overrides)
++        config = yaml_to_benchmark_config(yaml_data, model_entry, mode, language, cli_overrides)
++        if getattr(config.generation, "mode", "llm") == "local":
++            continue
+@@
+-    formatter_max_tokens = model_entry.get("formatter_max_tokens")
++    formatter_max_tokens = model_entry.get("formatter_max_tokens")
+@@
+-    config_kwargs: Dict[str, Any] = dict(
++    generation_defaults = defaults.get("generation", {}) if isinstance(defaults, dict) else {}
++    yaml_generation = yaml_data.get("generation", {}) or {}
++    if not isinstance(yaml_generation, dict):
++        yaml_generation = {}
++    if not isinstance(generation_defaults, dict):
++        generation_defaults = {}
++    model_generation = model_entry.get("generation", {}) or {}
++    if not isinstance(model_generation, dict):
++        model_generation = {}
++
++    def _first_value(*candidates):
++        for candidate in candidates:
++            if candidate is not None:
++                return candidate
++        return None
++
++    generation_mode_value = _first_value(
++        model_generation.get("mode"),
++        yaml_generation.get("mode"),
++        generation_defaults.get("mode"),
++    )
++    if generation_mode_value is None:
++        generation_mode_value = "llm"
++    generation_mode = str(generation_mode_value).lower().strip()
++    if generation_mode not in {"llm", "local"}:
++        generation_mode = "llm"
++
++    generation_local_dir_value = _first_value(
++        model_generation.get("local_dir"),
++        yaml_generation.get("local_dir"),
++        generation_defaults.get("local_dir"),
++    )
++    generation_local_dir = (
++        str(generation_local_dir_value)
++        if generation_local_dir_value is not None and str(generation_local_dir_value).strip()
++        else None
++    )
++
++    reuse_existing_value = _first_value(
++        model_generation.get("reuse_existing"),
++        yaml_generation.get("reuse_existing"),
++        generation_defaults.get("reuse_existing"),
++    )
++    if reuse_existing_value is None:
++        reuse_existing_value = True
++    reuse_existing = bool(reuse_existing_value)
++
++    config_kwargs: Dict[str, Any] = dict(
+@@
+-        agentic=agentic_cfg,
++        agentic=agentic_cfg,
++        generation=GenerationConfig(
++            mode="local" if generation_mode == "local" else "llm",
++            local_dir=generation_local_dir,
++            reuse_existing=reuse_existing,
++        ),
+diff --git a/src/raw/runner.py b/src/raw/runner.py
+@@
+-RUNS_DIR = PROJECT_ROOT / "runs"
++RUNS_DIR = PROJECT_ROOT / "runs"
+ RUNS_DIR.mkdir(parents=True, exist_ok=True)
++DEFAULT_LOCAL_KERNEL_DIR = PROJECT_ROOT / "outputs" / "local_kernels"
+@@
+-def sanitize_component(value: str) -> str:
++def sanitize_component(value: str) -> str:
+     return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in value)
++
++def local_candidate_json_path(base_dir: Path | None, config: "BenchmarkConfig", level: int, problem_id: int) -> Path:
++    if base_dir is None:
++        raise ValueError("Local generation directory is not configured.")
++    mode_safe = sanitize_component(str(getattr(config, "mode", "raw")))
++    language_safe = sanitize_component(str(getattr(config, "language", "cuda")))
++    provider_safe = sanitize_component(str(getattr(config, "provider", "local")))
++    model_id = str(getattr(config, "generator_model", "kernel"))
++    model_safe = sanitize_component(model_id.replace("/", "_"))
++    filename = f"problem_{problem_id:04d}.json"
++    return (
++        base_dir
++        / mode_safe
++        / language_safe
++        / provider_safe
++        / model_safe
++        / f"level{level}"
++        / filename
++    )
+@@
+-    _CPU_STATE["inference_fn"] = build_inference_callable(config)
+-    _CPU_STATE["formatter_fn"] = build_formatter_callable(config)
++    generation_mode = getattr(getattr(config, "generation", None), "mode", "llm")
++    _CPU_STATE["generation_mode"] = generation_mode
++    local_dir_setting = getattr(getattr(config, "generation", None), "local_dir", None)
++    if local_dir_setting:
++        local_dir_path = Path(local_dir_setting)
++        if not local_dir_path.is_absolute():
++            local_dir_path = PROJECT_ROOT / local_dir_path
++    else:
++        local_dir_path = DEFAULT_LOCAL_KERNEL_DIR
++    if generation_mode == "local":
++        _CPU_STATE["local_generation_dir"] = local_dir_path
++        _CPU_STATE["inference_fn"] = None
++        _CPU_STATE["formatter_fn"] = None
++    else:
++        _CPU_STATE["local_generation_dir"] = None
++        _CPU_STATE["inference_fn"] = build_inference_callable(config)
++        _CPU_STATE["formatter_fn"] = build_formatter_callable(config)
+@@
+-        prepare_start = perf_counter()
+-        candidate = _prepare_problem(level, problem_id, config, inference_fn)
++        prepare_start = perf_counter()
++        if generation_mode == "local":
++            if local_dir is None:
++                raise RuntimeError("Local generation directory not configured for CPU worker")
++            candidate = _prepare_problem_local(level, problem_id, config, local_dir)
++        else:
++            if inference_fn is None:
++                raise RuntimeError("Inference function not initialized")
++            candidate = _prepare_problem(level, problem_id, config, inference_fn)
+diff --git a/scripts/generate_local_kernels.py b/scripts/generate_local_kernels.py
+@@
++import sys
+@@
++SCRIPT_DIR = Path(__file__).resolve().parent
++REPO_ROOT = SCRIPT_DIR.parent
++SRC_DIR = REPO_ROOT / "src"
++if str(SRC_DIR) not in sys.path:
++    sys.path.insert(0, str(SRC_DIR))
+@@
++def _resolve_output_dir(config, override: str | None) -> Path:
++    candidate = override or getattr(getattr(config, "generation", None), "local_dir", None)
++    if candidate:
++        base = Path(candidate)
++        if not base.is_absolute():
++            base = PROJECT_ROOT / base
++    else:
++        base = PROJECT_ROOT / "outputs" / "local_kernels"
++    base.mkdir(parents=True, exist_ok=True)
++    return base
+@@
++    for mode, language, model_entry in run_plan:
++        if str(mode).lower() != "raw":
++            continue
++        config = yaml_to_benchmark_config(yaml_data, model_entry, mode, language, cli_overrides={})
++        if getattr(getattr(config, "generation", None), "mode", "llm") != "local":
++            continue
++        written = _generate_for_config(config, args.output_dir)
++        total_written += written
+diff --git b/setup_and_run.sh a/setup_and_run.sh
+@@
+-export KB3_MODAL_TIMEOUT_SECONDS="${KB3_MODAL_TIMEOUT_SECONDS:-0}"
+-
+-echo "[setup] Launching Modal raw evaluation for ${CONFIG_REL}..."
+-KB3_MODAL_CONFIG_PATH="${CONFIG_REL}" uv run modal run tools/modal_raw.py
++export KB3_MODAL_TIMEOUT_SECONDS="${KB3_MODAL_TIMEOUT_SECONDS:-0}"
++
++echo "[setup] Precomputing local kernels for ${CONFIG_REL}..."
++uv run python scripts/generate_local_kernels.py "${CONFIG_REL}"
++
++echo "[setup] Launching Modal raw evaluation for ${CONFIG_REL}..."
++KB3_MODAL_CONFIG_PATH="${CONFIG_REL}" uv run modal run tools/modal_raw.py
+diff --git a/configs/all_providers_raw.yaml b/configs/all_providers_raw.yaml
+@@
+   raw:
+     cpu_concurrency: max
+     gpu_concurrency: 2
+     max_jobs: max
++  generation:
++    mode: local
++    local_dir: outputs/local_kernels
+diff --git a/configs/modal_raw.yaml b/configs/modal_raw.yaml
+@@
+   raw:
+     cpu_concurrency: max
+     gpu_concurrency: 1
+     max_jobs: max
++  generation:
++    mode: local
++    local_dir: outputs/local_kernels
+```
+
+## validate
+- `uv run python scripts/generate_local_kernels.py configs/all_providers_raw.yaml`
+- `uv run python -m compileall config.py src/batch_runner.py src/raw/runner.py scripts/generate_local_kernels.py`
+# 2025-10-28 Simplify raw+Modal workflow
+
+## rationale
+Default to local kernel generation, slim the raw benchmark to a single GROQ target, and have `setup_and_run.sh` pass the generated kernels to Modal automatically.
+
+## patch
+```diff
+diff --git a/config.py b/config.py
+@@
+-class GenerationConfig:
+-    mode: GenerationMode = "llm"
++class GenerationConfig:
++    mode: GenerationMode = "local"
+
+diff --git a/src/batch_runner.py b/src/batch_runner.py
+@@
+-    if generation_mode_value is None:
+-        generation_mode_value = "llm"
++    if generation_mode_value is None:
++        generation_mode_value = GenerationConfig().mode
+@@
+-    if reuse_existing_value is None:
+-        reuse_existing_value = True
++    if reuse_existing_value is None:
++        reuse_existing_value = GenerationConfig().reuse_existing
+
+diff --git a/src/raw/runner.py b/src/raw/runner.py
+@@
+-    generation_mode = getattr(getattr(config, "generation", None), "mode", "llm")
+-    _CPU_STATE["generation_mode"] = generation_mode
+-    local_dir_setting = getattr(getattr(config, "generation", None), "local_dir", None)
++    env_generation_mode = os.environ.get("KB3_FORCE_GENERATION_MODE")
++    generation_mode = env_generation_mode or getattr(getattr(config, "generation", None), "mode", "local")
++    generation_mode = str(generation_mode).lower().strip() or "local"
++    _CPU_STATE["generation_mode"] = generation_mode
++    env_local_dir = os.environ.get("KB3_LOCAL_KERNEL_DIR")
++    local_dir_setting = env_local_dir or getattr(getattr(config, "generation", None), "local_dir", None)
+@@
+-        prepare_start = perf_counter()
+-        if inference_fn is None:
+-            raise RuntimeError("Inference function not initialized")
+-        candidate = _prepare_problem(level, problem_id, config, inference_fn)
++        prepare_start = perf_counter()
++        if generation_mode == "local":
++            if local_dir is None:
++                raise RuntimeError("Local generation directory not configured for CPU worker")
++            candidate = _prepare_problem_local(level, problem_id, config, local_dir)
++        else:
++            if inference_fn is None:
++                raise RuntimeError("Inference function not initialized")
++            candidate = _prepare_problem(level, problem_id, config, inference_fn)
+
+diff --git a/scripts/generate_local_kernels.py b/scripts/generate_local_kernels.py
+@@
+-    parser.add_argument(
+-        "--output-dir",
+-        type=str,
+-        default=None,
+-        help="Override local generation output directory.",
+-    )
++    parser.add_argument(
++        "--output-dir",
++        type=str,
++        default=None,
++        help="Explicit directory for generated kernels (defaults to tmp/local_kernels/<timestamp>).",
++    )
+@@
+-    total_written = 0
+-    for mode, language, model_entry in run_plan:
+-        if str(mode).lower() != "raw":
+-            continue
+-        config = yaml_to_benchmark_config(yaml_data, model_entry, mode, language, cli_overrides={})
+-        if getattr(getattr(config, "generation", None), "mode", "llm") != "local":
+-            continue
+-        written = _generate_for_config(config, args.output_dir)
+-        total_written += written
+-
+-    print(f"[local-generation] Wrote {total_written} kernel payload(s) for {yaml_path}.")
++    if args.output_dir:
++        base_dir = Path(args.output_dir)
++        if not base_dir.is_absolute():
++            base_dir = PROJECT_ROOT / base_dir
++    else:
++        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d-%H%M%S")
++        base_dir = PROJECT_ROOT / "tmp" / "local_kernels" / timestamp
++    base_dir.mkdir(parents=True, exist_ok=True)
++
++    reuse_existing_default = True
++    total_written = 0
++    for mode, language, model_entry in run_plan:
++        if str(mode).lower() != "raw":
++            continue
++        config = yaml_to_benchmark_config(yaml_data, model_entry, mode, language, cli_overrides={})
++        reuse_existing = getattr(getattr(config, "generation", None), "reuse_existing", reuse_existing_default)
++        written = _generate_for_config(config, base_dir, reuse_existing)
++        total_written += written
++
++    print(f"[local-generation] Wrote {total_written} kernel payload(s) for {yaml_path} into {base_dir}.")
++    print(f"LOCAL_KERNEL_DIR={base_dir}")
+
+diff --git a/setup_and_run.sh b/setup_and_run.sh
+@@
+-echo "[setup] Precomputing local kernels for ${CONFIG_REL}..."
+-uv run python scripts/generate_local_kernels.py "${CONFIG_REL}"
++echo "[setup] Precomputing local kernels for ${CONFIG_REL}..."
++LOCAL_KERNEL_OUTPUT=$(uv run python scripts/generate_local_kernels.py "${CONFIG_REL}")
++echo "${LOCAL_KERNEL_OUTPUT}"
++KB3_LOCAL_KERNEL_DIR=$(printf '%s\n' "${LOCAL_KERNEL_OUTPUT}" | awk -F= '/^LOCAL_KERNEL_DIR=/{print $2}')
++if [ -z "${KB3_LOCAL_KERNEL_DIR}" ]; then
++  echo "[setup] Failed to determine local kernel directory." >&2
++  exit 1
++fi
++KB3_LOCAL_KERNEL_DIR=$(python3 - "${KB3_LOCAL_KERNEL_DIR}" "${REPO_ROOT}" <<'PY'
++import os
++import sys
++
++path = sys.argv[1]
++root = sys.argv[2]
++try:
++    rel = os.path.relpath(path, root)
++    if rel.startswith("../"):
++        raise ValueError
++    print(rel)
++except Exception:
++    print(path)
++PY
++)
++export KB3_LOCAL_KERNEL_DIR
+
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+ os.environ.setdefault("KB3_MODAL_TIMEOUT_SECONDS", os.environ.get("KB3_MODAL_TIMEOUT_SECONDS", "0"))
++if "KB3_LOCAL_KERNEL_DIR" in os.environ:
++    os.environ.setdefault("KB3_LOCAL_KERNEL_DIR", os.environ["KB3_LOCAL_KERNEL_DIR"])
+@@
+             "KB3_MODAL_GPU_NAME": MODAL_CONFIG.gpu.name,
+             "KB3_MODAL_GPU_COUNT": str(MODAL_CONFIG.gpu.count),
+             "KB3_MODAL_TIMEOUT_SECONDS": os.environ.get("KB3_MODAL_TIMEOUT_SECONDS", "0"),
++            "KB3_LOCAL_KERNEL_DIR": os.environ.get("KB3_LOCAL_KERNEL_DIR", ""),
+         }
+     )
+@@
+-    if os.environ.get("GROQ_API_KEY"):
++    local_kernel_dir = os.environ.get("KB3_LOCAL_KERNEL_DIR")
++    if local_kernel_dir:
++        print(f"[modal/raw] using local kernels from {local_kernel_dir}")
++    if os.environ.get("GROQ_API_KEY"):
+         print("[modal/raw] GROQ_API_KEY detected in environment for remote run.")
+
+diff --git a/configs/all_providers_raw.yaml b/configs/all_providers_raw.yaml
+@@
+-description: Raw-only evaluation across all providers/models with both CUDA and Triton kernels.
++description: Minimal raw evaluation using locally-generated kernels and GROQ formatter.
+@@
+-models:
+-  - provider: gemini
+-    model: gemini-2.5-pro
+-  - provider: gemini
+-    model: gemini-2.5-flash
+-  - provider: anthropic
+-    model: claude-sonnet-4-5
+-  - provider: anthropic
+-    model: claude-haiku-4-5
+-  - provider: openai
+-    model: gpt-5
+-  - provider: openrouter
+-    model: z-ai/glm-4.6
+-  - provider: xai
+-    model: grok-code-fast-1
+-  - provider: xai
+-    model: grok-4-fast-reasoning
+-  - provider: xai
+-    model: grok-4-0709
+-  - provider: groq
+-    model: moonshotai/kimi-k2-instruct-0905
++models:
++  - provider: groq
++    model: moonshotai/kimi-k2-instruct-0905
+@@
+-problems:
+-  levels: [1, 2]
+-  problem_ids: null
+-  max_problems: 100
++problems:
++  levels: [1]
++  problem_ids: null
++  max_problems: 10
+
+diff --git a/configs/modal_raw.yaml b/configs/modal_raw.yaml
+@@
+-problems:
+-  levels: [1]
+-  problem_ids: null
+-  max_problems: 1
++problems:
++  levels: [1]
++  problem_ids: null
++  max_problems: 10
+```
+
+## validate
+- `uv run python scripts/generate_local_kernels.py configs/all_providers_raw.yaml`
+- `uv run python -m compileall config.py src/batch_runner.py src/raw/runner.py scripts/generate_local_kernels.py tools/modal_raw.py`
+
+## patch
+```diff
+diff --git a/tools/modal_raw.py b/tools/modal_raw.py
+@@
+-import os
+-import subprocess
+-import sys
+-from pathlib import Path
+-from typing import Iterable, Sequence
++import os
++import subprocess
++import sys
++import tarfile
++from io import BytesIO
++from pathlib import Path
++from typing import Iterable, Sequence
+@@
+-def _run_subprocess(
++def _run_subprocess(
+@@
+-def _ensure_uv_installed_commands() -> Iterable[str]:
++def _ensure_uv_installed_commands() -> Iterable[str]:
+@@
++def _pack_artifacts(base_dir: Path) -> bytes | None:
++    candidates = ["outputs", "runs"]
++    buffer = BytesIO()
++    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
++        added = False
++        for rel in candidates:
++            path = base_dir / rel
++            if path.exists():
++                archive.add(path, arcname=rel)
++                added = True
++        if not added:
++            return None
++    return buffer.getvalue()
+@@
+-    _run_subprocess(
+-        ["uv", "run", "python", "eval.py", "--config", config_arg],
+-        cwd=workdir,
+-    )
+-    print("[modal/raw] run complete; artifacts are in /tmp/kernelbench/runs")
++    _run_subprocess(
++        ["uv", "run", "python", "eval.py", "--config", config_arg],
++        cwd=workdir,
++    )
++    print("[modal/raw] run complete; artifacts are in /tmp/kernelbench/runs")
++    artifacts_blob = _pack_artifacts(workdir)
++    return {
++        "artifacts_tar_gz": artifacts_blob,
++    }
+@@
+-    nvcc_version.remote()
+-    run_raw_eval.remote()
++    nvcc_version.remote()
++    result = run_raw_eval.remote()
++    artifacts_blob = None
++    if isinstance(result, dict):
++        artifacts_blob = result.get("artifacts_tar_gz")
++    if artifacts_blob:
++        buffer = BytesIO(artifacts_blob)
++        with tarfile.open(fileobj=buffer, mode="r:gz") as archive:
++            archive.extractall(path=REPO_ROOT)
++        print("[modal/raw] Artifacts unpacked into", REPO_ROOT)
++    else:
++        print("[modal/raw] WARNING: No artifacts returned by remote run.")
+```
+
+## validate
+- `uv run python -m compileall tools/modal_raw.py`
