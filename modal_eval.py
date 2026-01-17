@@ -19,16 +19,89 @@ import os
 import re
 import sys
 import time
+import urllib.request
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Literal, Dict, Any
+from typing import Optional, List, Literal, Dict, Any, Tuple
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.agent.modal_sandbox import ModalSandbox, ModalSandboxConfig, GPUType
+
+
+# =============================================================================
+# Dynamic Pricing (fetched from APIs, cached in memory)
+# =============================================================================
+
+# Cache for OpenRouter model pricing: {model_id: (input_per_million, output_per_million)}
+_openrouter_pricing_cache: Dict[str, Tuple[float, float]] = {}
+_openrouter_models_cache: Optional[Dict[str, Any]] = None
+
+def _fetch_openrouter_models() -> Dict[str, Any]:
+    """Fetch all OpenRouter models and cache them."""
+    global _openrouter_models_cache
+    if _openrouter_models_cache is not None:
+        return _openrouter_models_cache
+
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        return {}
+
+    try:
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+            _openrouter_models_cache = {m["id"]: m for m in data.get("data", [])}
+            return _openrouter_models_cache
+    except Exception as e:
+        print(f"Warning: Failed to fetch OpenRouter models: {e}")
+        return {}
+
+def get_openrouter_pricing(model_id: str) -> Optional[Tuple[float, float]]:
+    """Get pricing for an OpenRouter model (input, output per million tokens)."""
+    if model_id in _openrouter_pricing_cache:
+        return _openrouter_pricing_cache[model_id]
+
+    models = _fetch_openrouter_models()
+    if model_id not in models:
+        return None
+
+    pricing = models[model_id].get("pricing", {})
+    # OpenRouter returns per-token pricing, convert to per-million
+    input_per_token = float(pricing.get("prompt", 0))
+    output_per_token = float(pricing.get("completion", 0))
+
+    result = (input_per_token * 1_000_000, output_per_token * 1_000_000)
+    _openrouter_pricing_cache[model_id] = result
+    return result
+
+def is_valid_openrouter_model(model_id: str) -> bool:
+    """Check if a model ID is valid on OpenRouter."""
+    models = _fetch_openrouter_models()
+    return model_id in models
+
+
+# Mapping from our internal model IDs to OpenRouter model IDs for pricing lookup
+# OpenRouter has pricing for ALL providers, so we use it as single source of truth
+# Note: OpenRouter models (with /) are already in correct format - no mapping needed
+MODEL_TO_OPENROUTER = {
+    # Anthropic (we use dated IDs, OpenRouter uses canonical names)
+    "claude-opus-4-5-20251101": "anthropic/claude-opus-4.5",
+    "claude-sonnet-4-5-20250929": "anthropic/claude-sonnet-4.5",
+    # OpenAI (direct API uses short names, OpenRouter uses openai/ prefix)
+    "gpt-5.2": "openai/gpt-5.2",
+    # Gemini (direct API uses short names, OpenRouter uses google/ prefix)
+    "gemini-3-flash-preview": "google/gemini-3-flash-preview",
+    "gemini-3-pro-preview": "google/gemini-3-pro-preview",
+    # xAI (our internal name differs from OpenRouter)
+    "grok-4-1-fast-reasoning": "x-ai/grok-4.1-fast",
+}
 
 
 # =============================================================================
@@ -138,7 +211,7 @@ MODELS = {
         model_id="grok-4-1-fast-reasoning",
         provider="xai"
     ),
-    # Tier 2: Strong open/Chinese models via OpenRouter
+    # Tier 2: Strong open/Chinese models via OpenRouter (native function calling works)
     "glm-4.7": ModelConfig(
         name="GLM-4.7",
         model_id="z-ai/glm-4.7",
@@ -146,7 +219,7 @@ MODELS = {
     ),
     "deepseek-v3.2": ModelConfig(
         name="DeepSeek V3.2",
-        model_id="deepseek/deepseek-chat",
+        model_id="deepseek/deepseek-v3.2",
         provider="openrouter"
     ),
     "kimi-k2-thinking": ModelConfig(
@@ -160,6 +233,42 @@ MODELS = {
         provider="openrouter"
     ),
 }
+
+
+def get_model_config(model_key: str) -> Optional[ModelConfig]:
+    """Get model config by key, supporting both predefined and dynamic OpenRouter models.
+
+    For predefined models, returns the config from MODELS dict.
+    For OpenRouter models not in MODELS, validates against OpenRouter API
+    and creates a dynamic config.
+
+    Args:
+        model_key: Either a predefined key (e.g., "claude-opus-4.5") or
+                   an OpenRouter model ID (e.g., "anthropic/claude-3-opus")
+
+    Returns:
+        ModelConfig if valid, None otherwise
+    """
+    # Check predefined models first
+    if model_key in MODELS:
+        return MODELS[model_key]
+
+    # Check if it looks like an OpenRouter model ID (contains /)
+    if "/" in model_key:
+        if is_valid_openrouter_model(model_key):
+            # Get model info from OpenRouter
+            models = _fetch_openrouter_models()
+            model_info = models.get(model_key, {})
+            name = model_info.get("name", model_key)
+            return ModelConfig(
+                name=name,
+                model_id=model_key,
+                provider="openrouter"
+            )
+        else:
+            return None
+
+    return None
 
 
 # =============================================================================
@@ -216,11 +325,13 @@ def get_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) 
 3. Your __global__ kernels MUST be called in the C++ wrapper functions
 4. Do NOT fall back to PyTorch/cuBLAS in the wrapper (no torch::mm, torch::matmul, torch::conv2d, etc.)
 
-**REQUIRED WORKFLOW** (follow exactly):
-1. `cat /workspace/reference.py` - read the reference model
-2. Write solution.py with your CUDA kernel implementation
-3. Test: `python -c "from solution import Model; print('OK')"`
-4. Submit: call the submit tool with solution.py
+**REQUIRED WORKFLOW** (follow exactly - USE THE TOOLS):
+1. Use bash tool: `cat /workspace/reference.py` - read the reference model
+2. Use bash tool: `cat > /workspace/solution.py << 'EOF'\n<your code>\nEOF` - write your solution
+3. Use bash tool: `python -c "from solution import Model; print('OK')"` - test it compiles
+4. Use submit tool with path "solution.py" - submit for benchmarking
+
+IMPORTANT: You MUST use the bash tool to write files. Do NOT just describe code - actually write it using bash.
 
 **SOLUTION FORMAT** - Your solution.py MUST have this structure:
 ```python
@@ -384,6 +495,9 @@ class EvalResult:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    # Cache token tracking (for cost estimation)
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
     # Cost tracking (in USD, estimated)
     estimated_cost_usd: Optional[float] = None
     # Solution code (the submitted kernel)
@@ -563,7 +677,7 @@ def run_agent_on_modal(
             result.input_tokens = input_tokens
             result.output_tokens = output_tokens
             result.total_tokens = input_tokens + output_tokens
-            result.estimated_cost_usd = _estimate_cost(model_config.model_id, input_tokens, output_tokens)
+            result.estimated_cost_usd = _estimate_cost(model_config.model_id, model_config.provider, input_tokens, output_tokens)
 
             print(f"\n[Token Usage] Input: {input_tokens:,} | Output: {output_tokens:,} | Total: {input_tokens + output_tokens:,}", flush=True)
             if result.estimated_cost_usd:
@@ -610,6 +724,8 @@ def run_agent_on_modal(
         solution_path = None
         total_input_tokens = 0
         total_output_tokens = 0
+        total_cache_creation_tokens = 0
+        total_cache_read_tokens = 0
 
         for turn in range(max_turns):
             result.turns = turn + 1
@@ -625,10 +741,12 @@ def run_agent_on_modal(
                 result.error = f"API error: {e}"
                 break
 
-            # Track token usage from response
-            input_toks, output_toks = _extract_token_usage(response, model_config)
+            # Track token usage from response (including cache tokens)
+            input_toks, output_toks, cache_create, cache_read = _extract_token_usage(response, model_config)
             total_input_tokens += input_toks
             total_output_tokens += output_toks
+            total_cache_creation_tokens += cache_create
+            total_cache_read_tokens += cache_read
 
             # Process response
             assistant_content, tool_calls = _parse_response(response, model_config)
@@ -677,13 +795,23 @@ def run_agent_on_modal(
             if submitted:
                 break
 
-        # Store token usage
+        # Store token usage (including cache stats)
         result.input_tokens = total_input_tokens
         result.output_tokens = total_output_tokens
         result.total_tokens = total_input_tokens + total_output_tokens
-        result.estimated_cost_usd = _estimate_cost(model_config.model_id, total_input_tokens, total_output_tokens)
+        result.cache_creation_tokens = total_cache_creation_tokens
+        result.cache_read_tokens = total_cache_read_tokens
+        result.estimated_cost_usd = _estimate_cost(
+            model_config.model_id, model_config.provider,
+            total_input_tokens, total_output_tokens,
+            total_cache_creation_tokens, total_cache_read_tokens
+        )
 
-        print(f"\n[Token Usage] Input: {total_input_tokens:,} | Output: {total_output_tokens:,} | Total: {total_input_tokens + total_output_tokens:,}", flush=True)
+        # Log token usage with cache info
+        cache_info = ""
+        if total_cache_creation_tokens or total_cache_read_tokens:
+            cache_info = f" | Cache Create: {total_cache_creation_tokens:,} | Cache Read: {total_cache_read_tokens:,}"
+        print(f"\n[Token Usage] Input: {total_input_tokens:,} | Output: {total_output_tokens:,} | Total: {total_input_tokens + total_output_tokens:,}{cache_info}", flush=True)
         if result.estimated_cost_usd:
             print(f"[Est. Cost] ${result.estimated_cost_usd:.4f}", flush=True)
 
@@ -726,63 +854,102 @@ def run_agent_on_modal(
 def _extract_token_usage(response, model_config: ModelConfig) -> tuple:
     """Extract input and output token counts from API response.
 
-    Returns: (input_tokens, output_tokens)
+    Returns: (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
+    Cache tokens are 0 if not available/applicable.
     """
     input_tokens = 0
     output_tokens = 0
+    cache_creation_tokens = 0
+    cache_read_tokens = 0
 
     if model_config.provider == "anthropic":
-        # Anthropic response.usage
+        # Anthropic response.usage includes cache token counts
         if hasattr(response, 'usage') and response.usage:
             input_tokens = getattr(response.usage, 'input_tokens', 0)
             output_tokens = getattr(response.usage, 'output_tokens', 0)
+            cache_creation_tokens = getattr(response.usage, 'cache_creation_input_tokens', 0)
+            cache_read_tokens = getattr(response.usage, 'cache_read_input_tokens', 0)
     else:
         # OpenAI-compatible (openai, xai, openrouter)
         if hasattr(response, 'usage') and response.usage:
             input_tokens = getattr(response.usage, 'prompt_tokens', 0)
             output_tokens = getattr(response.usage, 'completion_tokens', 0)
+            # OpenRouter returns cache info in prompt_tokens_details
+            details = getattr(response.usage, 'prompt_tokens_details', None)
+            if details:
+                cache_read_tokens = getattr(details, 'cached_tokens', 0)
 
-    return input_tokens, output_tokens
-
-
-# Pricing per million tokens (input, output) in USD
-# Updated 2026-01-09
-MODEL_PRICING = {
-    # Anthropic
-    "claude-opus-4-5-20251101": (15.0, 75.0),
-    "claude-sonnet-4-5-20250929": (3.0, 15.0),
-    # OpenAI
-    "gpt-5.2": (10.0, 30.0),
-    # Gemini
-    "gemini-3-flash-preview": (0.10, 0.40),
-    "gemini-3-pro-preview": (1.25, 5.0),
-    # xAI
-    "grok-4-1-fast-reasoning": (3.0, 15.0),
-    # OpenRouter models
-    "z-ai/glm-4.7": (0.50, 2.0),
-    "deepseek/deepseek-chat": (0.30, 1.20),
-    "moonshotai/kimi-k2-thinking": (0.40, 1.75),
-    "minimax/minimax-m2.1": (0.50, 2.0),
-}
+    return input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
 
 
-def _estimate_cost(model_id: str, input_tokens: int, output_tokens: int) -> Optional[float]:
-    """Estimate cost in USD based on model pricing."""
-    if model_id not in MODEL_PRICING:
+def _get_pricing(model_id: str, provider: str) -> Optional[Tuple[float, float]]:
+    """Get pricing for a model (input, output per million tokens).
+
+    All pricing is fetched dynamically from OpenRouter API.
+    OpenRouter has pricing for all providers (Anthropic, OpenAI, Google, xAI, etc).
+    """
+    # Map our internal model ID to OpenRouter model ID
+    openrouter_id = MODEL_TO_OPENROUTER.get(model_id, model_id)
+
+    # Fetch pricing from OpenRouter
+    return get_openrouter_pricing(openrouter_id)
+
+
+def _estimate_cost(
+    model_id: str,
+    provider: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0
+) -> Optional[float]:
+    """Estimate cost in USD based on model pricing.
+
+    Cache pricing (Anthropic):
+    - Cache creation: 1.25x input price (25% premium)
+    - Cache reads: 0.10x input price (90% savings)
+
+    Note: input_tokens from API already includes non-cached input.
+    Cache read tokens get the discounted rate.
+    """
+    pricing = _get_pricing(model_id, provider)
+    if pricing is None:
         return None
 
-    input_price, output_price = MODEL_PRICING[model_id]
-    cost = (input_tokens * input_price / 1_000_000) + (output_tokens * output_price / 1_000_000)
+    input_price, output_price = pricing
+
+    # Base cost for non-cached input and output
+    # Note: For Anthropic, input_tokens is total input minus cache reads
+    # For providers without caching breakdown, this is just normal pricing
+    base_input_cost = input_tokens * input_price / 1_000_000
+    output_cost = output_tokens * output_price / 1_000_000
+
+    # Cache costs (Anthropic pricing model)
+    # Cache creation: 1.25x input price
+    # Cache reads: 0.10x input price (90% savings)
+    cache_creation_cost = cache_creation_tokens * (input_price * 1.25) / 1_000_000
+    cache_read_cost = cache_read_tokens * (input_price * 0.10) / 1_000_000
+
+    cost = base_input_cost + output_cost + cache_creation_cost + cache_read_cost
     return round(cost, 6)
 
 
 def _get_model_response(client, model_config: ModelConfig, system_prompt: str, messages: list):
     """Get response from model."""
     if model_config.provider == "anthropic":
+        # Use prompt caching for Anthropic - format system as content block with cache_control
+        # Cache reads are 0.25x input token cost (75% savings)
+        system_with_cache = [
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"}
+            }
+        ]
         kwargs = {
             "model": model_config.model_id,
             "max_tokens": 8192,
-            "system": system_prompt,
+            "system": system_with_cache,
             "messages": messages
         }
         if not model_config.use_xml_tools:
@@ -801,11 +968,39 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
 
     else:
         # OpenAI-compatible (gemini, xai, openrouter)
-        kwargs = {
-            "model": model_config.model_id,
-            "max_tokens": 8192,
-            "messages": messages
-        }
+        # For OpenRouter, use prompt caching with cache_control on system message
+        # This works for Anthropic models via OpenRouter (75% savings on cache reads)
+        # For other providers (DeepSeek, GLM, etc.), automatic caching applies
+        if model_config.provider == "openrouter":
+            # Format system message with cache_control for OpenRouter
+            # OpenRouter supports Anthropic-style caching for all providers
+            cached_messages = []
+            for msg in messages:
+                if msg.get("role") == "system":
+                    cached_messages.append({
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": msg["content"],
+                                "cache_control": {"type": "ephemeral"}
+                            }
+                        ]
+                    })
+                else:
+                    cached_messages.append(msg)
+            kwargs = {
+                "model": model_config.model_id,
+                "max_tokens": 8192,
+                "messages": cached_messages
+            }
+        else:
+            # Gemini, xAI - automatic caching, no special format needed
+            kwargs = {
+                "model": model_config.model_id,
+                "max_tokens": 8192,
+                "messages": messages
+            }
         if not model_config.use_xml_tools:
             kwargs["tools"] = TOOLS_OPENAI
         return client.chat.completions.create(**kwargs)
@@ -943,9 +1138,14 @@ try:
     print("Checking correctness...", flush=True)
     with torch.no_grad():
         ref_out, sol_out = ref_model(*inputs), sol_model(*inputs)
-    max_diff = (ref_out.float() - sol_out.float()).abs().max().item() if isinstance(ref_out, torch.Tensor) else 0
-    correct = max_diff < 5.0  # Relaxed for bf16
-    print(f"max_diff: {max_diff}, correct: {correct}", flush=True)
+    ref_f, sol_f = ref_out.float(), sol_out.float()
+    max_diff = (ref_f - sol_f).abs().max().item() if isinstance(ref_out, torch.Tensor) else 0
+    # Use proper tolerance: atol + rtol * |ref| (matches torch.allclose behavior)
+    atol, rtol = 0.05, 0.02
+    max_ref = ref_f.abs().max().item() if isinstance(ref_out, torch.Tensor) else 1.0
+    tolerance = atol + rtol * max_ref
+    correct = max_diff < tolerance
+    print(f"max_diff: {max_diff:.6f}, tolerance: {tolerance:.6f}, correct: {correct}", flush=True)
 
     if not correct:
         print(json.dumps({"compiled": True, "correct": False, "speedup": None, "error": f"max_diff={max_diff}"}))
@@ -1039,22 +1239,25 @@ def main():
     args = parser.parse_args()
 
     if args.list_models:
-        print("Available models:")
+        print("Predefined models:")
         for key, cfg in MODELS.items():
             print(f"  {key}: {cfg.name} ({cfg.provider})")
+        print("\nOpenRouter models:")
+        print("  Any valid OpenRouter model ID can be used (e.g., 'anthropic/claude-3-opus')")
+        print("  Pricing is fetched dynamically from OpenRouter API")
         return
 
     if not args.model or not args.problem:
         parser.print_help()
         return
 
-    # Load model config
-    if args.model not in MODELS:
+    # Load model config (supports predefined keys and dynamic OpenRouter models)
+    model_config = get_model_config(args.model)
+    if model_config is None:
         print(f"Unknown model: {args.model}")
-        print(f"Available: {list(MODELS.keys())}")
+        print(f"Predefined models: {list(MODELS.keys())}")
+        print("Or use any valid OpenRouter model ID (e.g., 'anthropic/claude-3-opus')")
         return
-
-    model_config = MODELS[args.model]
 
     # Load problem
     problem_path = PROJECT_ROOT / "KernelBench" / args.problem
