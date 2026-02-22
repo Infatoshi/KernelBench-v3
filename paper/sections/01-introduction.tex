@@ -1,0 +1,10 @@
+Kernel engineering is a bottleneck for deploying efficient ML systems. While modern compilers and libraries provide optimized kernels, tailoring kernels to new architectures or fused operators often requires expert attention. Recent work introduced KernelBench to test whether LLMs can automate this process by producing faster CUDA kernels from PyTorch reference code~\cite{kernelbench}. The benchmark sparked interest, but subsequent analyses showed that benchmark design and evaluation details strongly influence results~\cite{metr2025}.
+
+KernelBench v3 is a rebuild focused on modern inference kernels, stronger baselines, and transparent cost accounting. The benchmark reduces the problem set to 41 tasks that are representative of current workloads, prioritizes Hopper and Blackwell GPUs, and tracks per-run tokens and cost. The goal is not to maximize speedups with fragile tricks, but to measure whether models can produce kernels that compile, are numerically correct, and outperform real baselines.
+
+This paper makes three contributions:
+\begin{itemize}[leftmargin=1.2em]
+    \item A curated benchmark of 41 modern kernel tasks across four difficulty levels.
+    \item An evaluation pipeline that reports compilation, correctness, and baseline-beating rates, with full per-run cost accounting.
+    \item A results summary across \TotalModels{} models on H100 and B200 GPUs, highlighting where current models still fail.
+\end{itemize}

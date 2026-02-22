@@ -1,6 +1,11 @@
 import torch
 import torch.nn as nn
 
+
+OP_TYPE = "gemm"
+SUPPORTED_PRECISIONS = ['fp4', 'fp8', 'fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
+
 class Model(nn.Module):
     """
     Performs batched matrix multiplication (C = A * B) where A, B, and C have the same batch dimension.

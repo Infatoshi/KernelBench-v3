@@ -1,0 +1,102 @@
+\begin{thebibliography}{15}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Ainslie et~al.(2023)Ainslie, Lee-Thorp, de~Jong, Zemlyanskiy, Lebron,
+  and Sanghai]{gqa}
+Joshua Ainslie, James Lee-Thorp, Michiel de~Jong, Yury Zemlyanskiy, Federico
+  Lebron, and Sumit Sanghai.
+\newblock Gqa: Training generalized multi-query transformer models from
+  multi-head checkpoints, 2023.
+\newblock URL \url{https://arxiv.org/abs/2305.13245}.
+
+\bibitem[Arledge(2026)]{kernelbench-v3-repo}
+Elliot Arledge.
+\newblock Kernelbench v3 repository.
+\newblock \url{https://github.com/Infatoshi/KernelBench-v3}, 2026.
+
+\bibitem[DeepSeek-AI et~al.(2024)]{deepseek-v3}
+DeepSeek-AI et~al.
+\newblock Deepseek-v3 technical report, 2024.
+\newblock URL \url{https://arxiv.org/abs/2412.19437}.
+
+\bibitem[{METR}(2025)]{metr2025}
+{METR}.
+\newblock Measuring automated kernel engineering.
+\newblock
+  \url{https://metr.org/blog/2025-02-14-measuring-automated-kernel-engineering/},
+  2025.
+
+\bibitem[Micikevicius et~al.(2022)]{fp8-formats}
+Paulius Micikevicius et~al.
+\newblock Fp8 formats for deep learning, 2022.
+\newblock URL \url{https://arxiv.org/abs/2209.05433}.
+
+\bibitem[{Modal Labs}(2024)]{modal-docs}
+{Modal Labs}.
+\newblock Modal documentation.
+\newblock \url{https://modal.com/docs}, 2024.
+
+\bibitem[{NVIDIA}(2022)]{nvidia-h100}
+{NVIDIA}.
+\newblock Nvidia hopper architecture whitepaper.
+\newblock
+  \url{https://resources.nvidia.com/en-us-tensor-core/gtc22-whitepaper-hopper},
+  2022.
+
+\bibitem[{NVIDIA}(2024{\natexlab{a}})]{cuda-13-1}
+{NVIDIA}.
+\newblock Cuda toolkit release notes.
+\newblock
+  \url{https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html},
+  2024{\natexlab{a}}.
+
+\bibitem[{NVIDIA}(2024{\natexlab{b}})]{nvidia-b200}
+{NVIDIA}.
+\newblock Nvidia blackwell architecture.
+\newblock \url{https://resources.nvidia.com/en-us-blackwell-architecture},
+  2024{\natexlab{b}}.
+
+\bibitem[Ouyang et~al.(2025)Ouyang, Guo, Arora, Zhang, Hu, Re, and
+  Mirhoseini]{kernelbench}
+Anne Ouyang, Simon Guo, Simran Arora, Alex~L. Zhang, William Hu, Christopher
+  Re, and Azalia Mirhoseini.
+\newblock Kernelbench: Can llms write efficient gpu kernels?, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.10517}.
+
+\bibitem[{Scaling Intelligence Lab at Stanford
+  University}(2025)]{stanford-kernelbenchv01}
+{Scaling Intelligence Lab at Stanford University}.
+\newblock Kernelbench v0.1.
+\newblock \url{https://scalingintelligence.stanford.edu/blogs/kernelbenchv01/},
+  2025.
+
+\bibitem[Team et~al.(2025)]{kimi-linear}
+Kimi Team et~al.
+\newblock Kimi linear: An expressive, efficient attention architecture, 2025.
+\newblock URL \url{https://arxiv.org/abs/2510.26692}.
+
+\bibitem[Tillet et~al.(2019)Tillet, Kung, and Cox]{triton}
+Philippe Tillet, H.~T. Kung, and David Cox.
+\newblock Triton: An intermediate language and compiler for tiled neural
+  network computations.
+\newblock In \emph{Proceedings of the 3rd ACM SIGPLAN International Workshop on
+  Machine Learning and Programming Languages}, 2019.
+\newblock \doi{10.1145/3315508.3329973}.
+\newblock URL \url{https://doi.org/10.1145/3315508.3329973}.
+
+\bibitem[Wu et~al.(2023)Wu, Li, Aminabadi, Yao, and He]{int4-quant}
+Xiaoxia Wu, Cheng Li, Reza~Yazdani Aminabadi, Zhewei Yao, and Yuxiong He.
+\newblock Understanding int4 quantization for transformer models: Latency
+  speedup, composability, and failure cases, 2023.
+\newblock URL \url{https://arxiv.org/abs/2301.12017}.
+
+\bibitem[Yang et~al.(2024)Yang, Kautz, and Hatamizadeh]{gated-deltanet}
+Songlin Yang, Jan Kautz, and Ali Hatamizadeh.
+\newblock Gated delta networks: Improving mamba2 with delta rule, 2024.
+\newblock URL \url{https://arxiv.org/abs/2412.06464}.
+
+\end{thebibliography}

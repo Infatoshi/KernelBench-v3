@@ -1,6 +1,11 @@
 import torch
 import torch.nn as nn
 
+
+OP_TYPE = "gemm"
+SUPPORTED_PRECISIONS = ['fp4', 'fp8', 'fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
+
 class Model(nn.Module):
     """
     Simple model that performs matrix-vector multiplication (C = A * B).

@@ -14,9 +14,12 @@ Usage:
 """
 
 import argparse
+import ast
+import hashlib
 import json
 import os
 import re
+import signal
 import sys
 import time
 import urllib.request
@@ -29,7 +32,13 @@ from typing import Optional, List, Literal, Dict, Any, Tuple
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.agent.modal_sandbox import ModalSandbox, ModalSandboxConfig, GPUType
+from src.agent.local_sandbox import LocalSandbox, LocalSandboxConfig  # noqa: E402
+from src.agent.modal_sandbox import ModalSandbox, ModalSandboxConfig  # noqa: E402
+from src.config.precision_matrix import (  # noqa: E402
+    HARDWARE_PEAK_TFLOPS,
+    HARDWARE_PRECISIONS,
+    OP_PRECISION_VALIDITY,
+)
 
 
 # =============================================================================
@@ -164,6 +173,127 @@ def parse_xml_tool_calls(content: str) -> List[Dict[str, Any]]:
 
 
 # =============================================================================
+# Code Extraction (for reasoning models without tool use)
+# =============================================================================
+
+def extract_python_code(text: str) -> Optional[str]:
+    """Extract Python code from model response.
+
+    Tries multiple patterns:
+    1. Markdown code blocks with python/py tag
+    2. Generic markdown code blocks
+    3. Code between specific markers
+
+    Returns the last (most complete) code block found, or None.
+    """
+    # Pattern 1: ```python or ```py code blocks
+    python_blocks = re.findall(r'```(?:python|py)\s*\n(.*?)```', text, re.DOTALL)
+    if python_blocks:
+        # Return the last one (usually the most complete/final version)
+        return python_blocks[-1].strip()
+
+    # Pattern 2: Generic ``` code blocks (if they look like Python)
+    generic_blocks = re.findall(r'```\s*\n(.*?)```', text, re.DOTALL)
+    for block in reversed(generic_blocks):
+        # Check if it looks like Python (has imports, def, class, etc.)
+        if any(marker in block for marker in ['import ', 'def ', 'class ', 'torch.', 'cuda_source']):
+            return block.strip()
+
+    # Pattern 3: Look for solution.py content markers
+    solution_match = re.search(r'# solution\.py\s*\n(.*?)(?=\n#\s*\w+\.py|\Z)', text, re.DOTALL)
+    if solution_match:
+        return solution_match.group(1).strip()
+
+    return None
+
+
+def get_reasoning_system_prompt(gpu_name: str, vram_gb: int) -> str:
+    """Generate system prompt for reasoning models (no tool use)."""
+    return f"""You are a GPU kernel optimization expert running inside an isolated benchmark sandbox. Your task is to write optimized CUDA kernels.
+
+**TARGET GPU**: NVIDIA {gpu_name} ({vram_gb}GB VRAM)
+
+**YOUR TASK**: Write a custom CUDA kernel to optimize the PyTorch model shown in the reference code.
+
+**CRITICAL REQUIREMENTS**:
+1. You MUST write actual CUDA C++ code using `torch.utils.cpp_extension.load_inline`
+2. Do NOT use torch.compile, Triton, or flash_attn
+3. Your __global__ kernels MUST be called in the C++ wrapper functions
+4. Do NOT fall back to PyTorch/cuBLAS in the wrapper (no torch::mm, torch::matmul, torch::conv2d, etc.)
+
+**PERFORMANCE REQUIREMENTS BY OP TYPE**:
+- For matrix operations (GEMM, matmul, linear layers, attention), for best performance consider Tensor Cores via WMMA (`<mma.h>`, `nvcuda::wmma::*`) or inline PTX (`mma.sync.aligned`).
+- Tensor Core tile alignment is often helpful: 16x16x16 for FP16, 8x8x4 for TF32.
+- For non-matrix ops (reductions, activations, norms), standard CUDA optimization is sufficient: memory coalescing, shared memory, warp-level primitives.
+- Priority order: (1) correct and compilable kernel, (2) performance optimization. If a tensor-core path does not compile reliably, submit a correct standard CUDA kernel first.
+- Default strategy: implement a standard tiled CUDA kernel first. Only use WMMA/PTX when you are fully confident it will compile and run correctly.
+
+**OUTPUT FORMAT**: Provide your complete solution.py in a markdown code block:
+
+```python
+import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+cuda_source = \"\"\"
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+// Your custom CUDA kernel
+__global__ void my_kernel(float* out, const float* in, int n) {{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) out[idx] = in[idx];
+}}
+
+// Wrapper that MUST call your kernel (not torch::mm or other PyTorch ops)
+torch::Tensor my_op(torch::Tensor input) {{
+    auto output = torch::empty_like(input);
+    int n = input.numel();
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    my_kernel<<<blocks, threads>>>(output.data_ptr<float>(), input.data_ptr<float>(), n);
+    return output;
+}}
+\"\"\"
+
+my_module = load_inline(
+    name='my_module',
+    cpp_sources=['torch::Tensor my_op(torch::Tensor);'],
+    cuda_sources=[cuda_source],
+    functions=['my_op'],
+    verbose=False
+)
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return my_module.my_op(x)
+
+def get_inputs():
+    return [torch.randn(1024, 1024, device='cuda')]
+
+def get_init_inputs():
+    return []
+```
+
+**FORBIDDEN** (will result in failure):
+- torch::mm, torch::matmul, torch::conv2d, torch::linear in C++ wrapper
+- Defining a __global__ kernel but not calling it
+- Using cuBLAS/cuDNN directly instead of your own kernel
+- torch.compile or @torch.jit.script
+
+**RULES**:
+- Keep the same class name `Model` and same `get_inputs`/`get_init_inputs` as reference
+- Write actual __global__ CUDA kernels and CALL them
+- Optimize for {gpu_name}: use shared memory, tiling, warp-level primitives
+- Provide COMPLETE, COMPILABLE code - no placeholders or TODOs
+
+If your code has errors, I will show you the error message and you should provide a corrected version."""
+
+
+# =============================================================================
 # Model Configurations
 # =============================================================================
 
@@ -175,19 +305,20 @@ class ModelConfig:
     provider: Literal["anthropic", "openai", "gemini", "xai", "openrouter"]
     use_xml_tools: bool = False
     provider_order: Optional[List[str]] = None  # For OpenRouter
+    reasoning_mode: bool = False  # For reasoning models without tool use (e.g., kimi-k2.5)
 
 
 MODELS = {
     # Tier 1: Frontier models
     "claude-opus-4.5": ModelConfig(
         name="Claude Opus 4.5",
-        model_id="claude-opus-4-5-20251101",
-        provider="anthropic"
+        model_id="anthropic/claude-opus-4",
+        provider="openrouter"
     ),
     "claude-sonnet-4.5": ModelConfig(
         name="Claude Sonnet 4.5",
-        model_id="claude-sonnet-4-5-20250929",
-        provider="anthropic"
+        model_id="anthropic/claude-sonnet-4",
+        provider="openrouter"
     ),
     "gpt-5.2": ModelConfig(
         name="GPT-5.2",
@@ -196,9 +327,9 @@ MODELS = {
     ),
     "gemini-3-flash": ModelConfig(
         name="Gemini 3 Flash",
-        model_id="gemini-3-flash-preview",
-        provider="gemini",
-        use_xml_tools=False  # Native function calling works
+        model_id="google/gemini-2.0-flash-exp",
+        provider="openrouter",
+        use_xml_tools=False
     ),
     "gemini-3-pro": ModelConfig(
         name="Gemini 3 Pro",
@@ -219,7 +350,7 @@ MODELS = {
     ),
     "deepseek-v3.2": ModelConfig(
         name="DeepSeek V3.2",
-        model_id="deepseek/deepseek-v3.2",
+        model_id="deepseek/deepseek-chat",
         provider="openrouter"
     ),
     "kimi-k2-thinking": ModelConfig(
@@ -231,6 +362,66 @@ MODELS = {
         name="MiniMax M2.1",
         model_id="minimax/minimax-m2.1",
         provider="openrouter"
+    ),
+    # OpenRouter frontier models
+    "z-ai/glm-5": ModelConfig(
+        name="GLM-5",
+        model_id="z-ai/glm-5",
+        provider="openrouter"
+    ),
+    "openrouter/aurora-alpha": ModelConfig(
+        name="OpenRouter Aurora Alpha",
+        model_id="openrouter/aurora-alpha",
+        provider="openrouter"
+    ),
+    # Phase 1 compatibility matrix model IDs (exact keys for harness dry-run checks)
+    "anthropic/claude-opus-4.6": ModelConfig(
+        name="Claude Opus 4.6",
+        model_id="anthropic/claude-opus-4.6",
+        provider="openrouter"
+    ),
+    "openai/gpt-5.2-codex": ModelConfig(
+        name="GPT-5.2 Codex",
+        model_id="openai/gpt-5.2-codex",
+        provider="openrouter"
+    ),
+    "google/gemini-3-flash-preview": ModelConfig(
+        name="Gemini 3 Flash Preview",
+        model_id="google/gemini-3-flash-preview",
+        provider="openrouter"
+    ),
+    "google/gemini-3-pro-preview": ModelConfig(
+        name="Gemini 3 Pro Preview",
+        model_id="google/gemini-3-pro-preview",
+        provider="openrouter"
+    ),
+    "minimax/minimax-m2.5": ModelConfig(
+        name="MiniMax M2.5",
+        model_id="minimax/minimax-m2.5",
+        provider="openrouter"
+    ),
+    "deepseek/deepseek-v3.2": ModelConfig(
+        name="DeepSeek V3.2",
+        model_id="deepseek/deepseek-v3.2",
+        provider="openrouter"
+    ),
+    "x-ai/grok-4.1-fast": ModelConfig(
+        name="Grok 4.1 Fast",
+        model_id="x-ai/grok-4.1-fast",
+        provider="openrouter"
+    ),
+    "moonshotai/kimi-k2.5": ModelConfig(
+        name="Kimi K2.5",
+        model_id="moonshotai/kimi-k2.5",
+        provider="openrouter",
+        reasoning_mode=True
+    ),
+    # Reasoning models (no tool use, code extracted from text output)
+    "kimi-k2.5": ModelConfig(
+        name="Kimi K2.5",
+        model_id="moonshotai/kimi-k2.5",
+        provider="openrouter",
+        reasoning_mode=True
     ),
 }
 
@@ -260,10 +451,16 @@ def get_model_config(model_key: str) -> Optional[ModelConfig]:
             models = _fetch_openrouter_models()
             model_info = models.get(model_key, {})
             name = model_info.get("name", model_key)
+
+            # Check if model supports tool use
+            supported_params = model_info.get("supported_parameters", [])
+            has_tools = "tools" in supported_params
+
             return ModelConfig(
                 name=name,
                 model_id=model_key,
-                provider="openrouter"
+                provider="openrouter",
+                reasoning_mode=not has_tools  # Use reasoning mode if no tool support
             )
         else:
             return None
@@ -315,7 +512,7 @@ def get_provider_client(provider: str):
 
 def get_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) -> str:
     """Generate system prompt with GPU info."""
-    base_prompt = f"""You are a GPU kernel optimization expert. You have SSH access to an NVIDIA {gpu_name} GPU ({vram_gb}GB VRAM).
+    base_prompt = f"""You are a GPU kernel optimization expert running in an isolated sandbox on an NVIDIA {gpu_name} GPU ({vram_gb}GB VRAM).
 
 **YOUR TASK**: Write a custom CUDA kernel to optimize the PyTorch model in reference.py.
 
@@ -325,10 +522,17 @@ def get_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) 
 3. Your __global__ kernels MUST be called in the C++ wrapper functions
 4. Do NOT fall back to PyTorch/cuBLAS in the wrapper (no torch::mm, torch::matmul, torch::conv2d, etc.)
 
+**PERFORMANCE REQUIREMENTS BY OP TYPE**:
+- For matrix operations (GEMM, matmul, linear layers, attention), for best performance consider Tensor Cores via WMMA (`<mma.h>`, `nvcuda::wmma::*`) or inline PTX (`mma.sync.aligned`).
+- Tensor Core tile alignment is often helpful: 16x16x16 for FP16, 8x8x4 for TF32.
+- For non-matrix ops (reductions, activations, norms), standard CUDA optimization is sufficient: memory coalescing, shared memory, warp-level primitives.
+- Priority order: (1) correct and compilable kernel, (2) performance optimization. If a tensor-core path does not compile reliably, submit a correct standard CUDA kernel first.
+- Default strategy: implement a standard tiled CUDA kernel first. Only use WMMA/PTX when you are fully confident it will compile and run correctly.
+
 **REQUIRED WORKFLOW** (follow exactly - USE THE TOOLS):
 1. Use bash tool: `cat /workspace/reference.py` - read the reference model
 2. Use bash tool: `cat > /workspace/solution.py << 'EOF'\n<your code>\nEOF` - write your solution
-3. Use bash tool: `python -c "from solution import Model; print('OK')"` - test it compiles
+3. Use bash tool: `python -c "import reference, solution, torch; m=solution.Model(*reference.get_init_inputs()).cuda().eval(); inputs=[x.cuda() if isinstance(x, torch.Tensor) else x for x in reference.get_inputs()]; _=m(*inputs); print('OK')"` - test compile + forward pass
 4. Use submit tool with path "solution.py" - submit for benchmarking
 
 IMPORTANT: You MUST use the bash tool to write files. Do NOT just describe code - actually write it using bash.
@@ -418,11 +622,527 @@ TOOLS:
         return base_prompt + native_tools
 
 
+def _safe_literal_eval(node: ast.AST) -> Any:
+    """Best-effort literal evaluation for static metadata extraction."""
+    try:
+        return ast.literal_eval(node)
+    except Exception:
+        return None
+
+
+def _extract_reference_metadata(reference_code: str) -> Dict[str, Any]:
+    """Extract static metadata from reference.py without executing it."""
+    metadata: Dict[str, Any] = {
+        "op_type": "unknown",
+        "supported_precisions": [],
+        "hardware_required": [],
+        "has_model_class": False,
+        "has_get_inputs": False,
+        "has_get_init_inputs": False,
+    }
+    try:
+        tree = ast.parse(reference_code)
+    except SyntaxError:
+        return metadata
+
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "Model":
+            metadata["has_model_class"] = True
+        if isinstance(node, ast.FunctionDef) and node.name == "get_inputs":
+            metadata["has_get_inputs"] = True
+        if isinstance(node, ast.FunctionDef) and node.name == "get_init_inputs":
+            metadata["has_get_init_inputs"] = True
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if not isinstance(target, ast.Name):
+                continue
+            if target.id == "OP_TYPE":
+                value = _safe_literal_eval(node.value)
+                if isinstance(value, str):
+                    metadata["op_type"] = value
+            elif target.id == "SUPPORTED_PRECISIONS":
+                value = _safe_literal_eval(node.value)
+                if isinstance(value, (list, tuple)):
+                    metadata["supported_precisions"] = [str(x) for x in value]
+            elif target.id == "HARDWARE_REQUIRED":
+                value = _safe_literal_eval(node.value)
+                if isinstance(value, (list, tuple)):
+                    metadata["hardware_required"] = [str(x) for x in value]
+    return metadata
+
+
+def _backend_self_check_command(backend: str) -> str:
+    """Command models should run before submit to verify solution behavior."""
+    if backend == "metal":
+        return (
+            "python -c \"import mlx.core as mx, solution; "
+            "a=mx.random.normal((128,128), dtype=mx.float32); "
+            "b=mx.random.normal((128,128), dtype=mx.float32); "
+            "y=solution.solution(a,b); mx.eval(y); print('OK')\""
+        )
+    if backend == "cutile":
+        return (
+            "python -c \"import reference, solution, torch; "
+            "m=solution.Model(*reference.get_init_inputs()).cuda().eval(); "
+            "inputs=[x.cuda() if isinstance(x, torch.Tensor) else x for x in reference.get_inputs()]; "
+            "_=m(*inputs); print('OK')\""
+        )
+    return (
+        "python -c \"import reference, solution, torch; "
+        "m=solution.Model(*reference.get_init_inputs()).cuda().eval(); "
+        "inputs=[x.cuda() if isinstance(x, torch.Tensor) else x for x in reference.get_inputs()]; "
+        "_=m(*inputs); print('OK')\""
+    )
+
+
+def _augment_system_prompt(system_prompt: str, backend: str) -> str:
+    """Append environment contract and anti-probing policy to any prompt."""
+    self_check = _backend_self_check_command(backend)
+    return (
+        system_prompt
+        + f"""
+
+EXECUTION ENVIRONMENT CONTRACT:
+- You are in an isolated benchmark sandbox shell, not a general SSH host session.
+- Working directory is `/workspace`.
+- Preloaded files: `/workspace/reference.py`, `/workspace/ENVIRONMENT.md`, `/workspace/BACKEND_API.md`, `/workspace/TEMPLATE_solution.py`, `/workspace/TASK_CONTEXT.md`.
+- Internet access and package installation are not part of this task. Do not run package managers.
+
+ANTI-PROBING POLICY:
+- At most one lightweight environment probe command in turn 1.
+- Do not spend turns on `pip list`, `which python`, `sys.path`, or filesystem crawling unless a compile/runtime error explicitly requires it.
+- Move to implementing `solution.py` immediately after reading context files.
+
+REQUIRED PRE-SUBMIT SELF-CHECK:
+- Run exactly:
+`{self_check}`
+- If this prints `OK`, call submit immediately and stop editing.
+"""
+    )
+
+
+def _inject_workspace_context(system_prompt: str, context_bundle: Dict[str, str]) -> str:
+    """Inline workspace context content directly into the prompt."""
+    environment_md = context_bundle.get("environment_md", "").strip()
+    backend_api_md = context_bundle.get("backend_api_md", "").strip()
+    task_context_md = context_bundle.get("task_context_md", "").strip()
+    template_solution_py = context_bundle.get("template_solution_py", "").strip()
+
+    return (
+        system_prompt
+        + "\n\nINLINE WORKSPACE CONTEXT (authoritative; do not re-discover):\n"
+        + "\n\n[ENVIRONMENT.md]\n"
+        + environment_md
+        + "\n\n[BACKEND_API.md]\n"
+        + backend_api_md
+        + "\n\n[TASK_CONTEXT.md]\n"
+        + task_context_md
+        + "\n\n[TEMPLATE_solution.py]\n```python\n"
+        + template_solution_py
+        + "\n```\n"
+    )
+
+
+def _build_backend_api_reference(backend: str) -> str:
+    """Generate concise backend-specific API notes for models."""
+    backend_key = backend.lower()
+    if backend_key == "triton":
+        return """# Backend API Quick Reference: Triton
+
+- Required imports:
+  - `import triton`
+  - `import triton.language as tl`
+- Required kernel pattern:
+  - `@triton.jit`
+  - `kernel_name[grid](...)`
+- Keep `Model`, `get_inputs`, `get_init_inputs` compatible with `reference.py`.
+- Do NOT use `torch.utils.cpp_extension.load_inline` in Triton backend.
+"""
+    if backend_key == "cutlass":
+        return """# Backend API Quick Reference: CUTLASS
+
+- Required includes from `/opt/cutlass/include`:
+  - `cutlass/gemm/device/gemm_universal.h`
+- Use `from torch.utils.cpp_extension import load_inline`.
+- Keep `Model`, `get_inputs`, `get_init_inputs` compatible with `reference.py`.
+- Do NOT fallback to raw PyTorch ops in the wrapper path.
+"""
+    if backend_key == "cute":
+        return """# Backend API Quick Reference: CuTe
+
+- CuTe headers path: `/opt/cutlass/include`.
+- Required includes:
+  - `cute/tensor.hpp`
+  - `cute/layout.hpp`
+- Use `from torch.utils.cpp_extension import load_inline`.
+- Keep `Model`, `get_inputs`, `get_init_inputs` compatible with `reference.py`.
+- Use exact include path `/opt/cutlass/include` (not `/opt/cutlass/include/include`).
+"""
+    if backend_key == "cutile":
+        return """# Backend API Quick Reference: CuTile Python
+
+- Required import:
+  - `import cuda.tile as ct`
+- Use CuTile Python kernels with `@ct.kernel`.
+- Launch signature:
+  - `ct.launch(stream, grid, kernel, kernel_args_tuple)`
+- Use compile-time constants for tile shapes.
+- Do NOT use `load_inline` or C++ extension code in CuTile backend.
+"""
+    if backend_key == "metal":
+        return """# Backend API Quick Reference: Metal (MLX)
+
+- Required import:
+  - `import mlx.core as mx`
+- Implement `solution(a, b)` for MLX arrays.
+- Use MLX operations / kernel APIs, not PyTorch CUDA extensions.
+- Do NOT use `torch.utils.cpp_extension.load_inline`.
+"""
+    if backend_key == "graphics":
+        return """# Backend API Quick Reference: Graphics (CUDA Triton)
+
+- Required imports:
+  - `import triton`
+  - `import triton.language as tl`
+- Required kernel pattern:
+  - `@triton.jit`
+  - `kernel_name[grid](...)`
+- Keep `Model`, `get_inputs`, `get_init_inputs` compatible with `reference.py`.
+- Do NOT use OpenGL/Vulkan/Metal runtime code paths.
+"""
+    return """# Backend API Quick Reference: CUDA
+
+- Use `from torch.utils.cpp_extension import load_inline`.
+- Write actual `__global__` CUDA kernels and call them from wrappers.
+- Keep `Model`, `get_inputs`, `get_init_inputs` compatible with `reference.py`.
+- Do NOT fallback to raw PyTorch/cuBLAS calls in wrapper path.
+"""
+
+
+def _build_template_solution(backend: str) -> str:
+    """Generate a minimal backend-specific template solution file."""
+    backend_key = backend.lower()
+    if backend_key == "triton":
+        return """import torch
+import torch.nn as nn
+import triton
+import triton.language as tl
+
+@triton.jit
+def _kernel(x_ptr, y_ptr, n, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    offs = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offs < n
+    x = tl.load(x_ptr + offs, mask=mask, other=0.0)
+    tl.store(y_ptr + offs, x, mask=mask)
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        y = torch.empty_like(x)
+        n = x.numel()
+        grid = (triton.cdiv(n, 256),)
+        _kernel[grid](x, y, n, BLOCK=256)
+        return y
+"""
+    if backend_key == "graphics":
+        return """import torch
+import torch.nn as nn
+import triton
+import triton.language as tl
+
+@triton.jit
+def _graphics_kernel(x_ptr, y_ptr, n, BLOCK: tl.constexpr):
+    pid = tl.program_id(0)
+    offs = pid * BLOCK + tl.arange(0, BLOCK)
+    mask = offs < n
+    x = tl.load(x_ptr + offs, mask=mask, other=0.0)
+    tl.store(y_ptr + offs, x, mask=mask)
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        y = torch.empty_like(x)
+        n = x.numel()
+        grid = (triton.cdiv(n, 256),)
+        _graphics_kernel[grid](x, y, n, BLOCK=256)
+        return y
+"""
+    if backend_key in {"cutlass", "cute", "cuda"}:
+        return """import torch
+import torch.nn as nn
+from torch.utils.cpp_extension import load_inline
+
+cuda_source = r'''
+#include <torch/extension.h>
+#include <cuda_runtime.h>
+
+__global__ void identity_kernel(const float* x, float* y, int n) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < n) y[idx] = x[idx];
+}
+
+torch::Tensor launch_identity(torch::Tensor x) {
+  auto y = torch::empty_like(x);
+  int n = x.numel();
+  int threads = 256;
+  int blocks = (n + threads - 1) / threads;
+  identity_kernel<<<blocks, threads>>>(x.data_ptr<float>(), y.data_ptr<float>(), n);
+  return y;
+}
+'''
+
+ext = load_inline(
+    name='kb_template_ext',
+    cpp_sources='torch::Tensor launch_identity(torch::Tensor x);',
+    cuda_sources=cuda_source,
+    functions=['launch_identity'],
+    verbose=False,
+)
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return ext.launch_identity(x)
+"""
+    if backend_key == "cutile":
+        return """import torch
+import torch.nn as nn
+import cuda.tile as ct
+
+@ct.kernel
+def _kernel(x, y, n):
+    # Fill in CuTile tile-level ops here using compile-time constants.
+    # Keep launch signature: ct.launch(stream, grid, kernel, kernel_args_tuple)
+    pass
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        y = torch.empty_like(x)
+        n = x.numel()
+        grid = (ct.cdiv(n, 256),)
+        ct.launch(torch.cuda.current_stream(), grid, _kernel, (x, y, n))
+        return y
+"""
+    if backend_key == "metal":
+        return """import mlx.core as mx
+
+def solution(a, b):
+    return mx.matmul(a, b)
+"""
+    return """import torch
+import torch.nn as nn
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+"""
+
+
+def _collect_runtime_environment(sandbox, backend: str, gpu_name: str, vram_gb: int, level: int) -> str:
+    """Collect runtime environment facts and return markdown."""
+    probe_cmd = """python - <<'PY'
+import importlib
+import json
+import platform
+import sys
+
+modules = {}
+for name in ("torch", "triton", "mlx.core", "cuda.tile", "flash_linear_attention"):
+    try:
+        mod = importlib.import_module(name)
+        modules[name] = getattr(mod, "__version__", "unknown")
+    except Exception:
+        modules[name] = None
+
+payload = {
+    "python_version": sys.version.split()[0],
+    "platform": platform.platform(),
+    "modules": modules,
+}
+print(json.dumps(payload))
+PY"""
+    probe_result = sandbox.run_command(probe_cmd, timeout=45)
+    payload: Dict[str, Any] = {}
+    if probe_result.get("returncode") == 0:
+        for line in reversed((probe_result.get("stdout") or "").splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                payload = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                continue
+
+    modules = payload.get("modules", {})
+    lines = [
+        "# Environment Snapshot",
+        "",
+        f"- backend: `{backend}`",
+        f"- target_gpu: `{gpu_name}`",
+        f"- target_vram_gb: `{vram_gb}`",
+        f"- level: `{level}`",
+        "- working_directory: `/workspace`",
+        f"- python_version: `{payload.get('python_version', 'unknown')}`",
+        f"- platform: `{payload.get('platform', 'unknown')}`",
+        "",
+        "## Module Availability",
+    ]
+    for name in ("torch", "triton", "mlx.core", "cuda.tile", "flash_linear_attention"):
+        version = modules.get(name)
+        lines.append(f"- {name}: `{version if version else 'unavailable'}`")
+    lines.extend([
+        "",
+        "## Constraints",
+        "- Do not run package installers during solving.",
+        "- Use preinstalled toolchain and files in `/workspace`.",
+    ])
+    return "\n".join(lines)
+
+
+def _build_task_context(
+    problem_name: str,
+    level: int,
+    gpu_name: str,
+    backend: str,
+    metadata: Dict[str, Any],
+) -> str:
+    """Generate per-problem task context file content."""
+    precisions = ", ".join(metadata.get("supported_precisions", [])) or "unknown"
+    hardware_required = ", ".join(metadata.get("hardware_required", [])) or "unknown"
+    return f"""# Task Context
+
+- problem: `{problem_name}`
+- level: `{level}`
+- backend: `{backend}`
+- gpu: `{gpu_name}`
+- op_type: `{metadata.get("op_type", "unknown")}`
+- supported_precisions: `{precisions}`
+- hardware_required: `{hardware_required}`
+- has_model_class: `{metadata.get("has_model_class", False)}`
+- has_get_inputs: `{metadata.get("has_get_inputs", False)}`
+- has_get_init_inputs: `{metadata.get("has_get_init_inputs", False)}`
+
+Read `/workspace/reference.py` and preserve API compatibility.
+"""
+
+
+def _prepare_workspace_context(
+    backend: str,
+    gpu_name: str,
+    vram_gb: int,
+    level: int,
+    problem_name: str,
+    metadata: Dict[str, Any],
+    sandbox,
+) -> Dict[str, str]:
+    """Build helper context bundle used for files and inline prompt injection."""
+    return {
+        "environment_md": _collect_runtime_environment(
+            sandbox=sandbox,
+            backend=backend,
+            gpu_name=gpu_name,
+            vram_gb=vram_gb,
+            level=level,
+        ),
+        "backend_api_md": _build_backend_api_reference(backend),
+        "template_solution_py": _build_template_solution(backend),
+        "task_context_md": _build_task_context(problem_name, level, gpu_name, backend, metadata),
+    }
+
+
+def _seed_workspace_context(sandbox, context_bundle: Dict[str, str]) -> None:
+    """Write helper context files into /workspace for reproducibility/debugging."""
+    try:
+        sandbox.write_file("ENVIRONMENT.md", context_bundle.get("environment_md", ""))
+        sandbox.write_file("BACKEND_API.md", context_bundle.get("backend_api_md", ""))
+        sandbox.write_file("TEMPLATE_solution.py", context_bundle.get("template_solution_py", ""))
+        sandbox.write_file("TASK_CONTEXT.md", context_bundle.get("task_context_md", ""))
+    except Exception as exc:
+        # Context files are helpful guidance, not a hard requirement.
+        print(f"Warning: failed to seed workspace context files: {exc}", flush=True)
+
+
+def _build_initial_user_message(
+    backend: str,
+    problem_name: str,
+    level: int,
+    gpu_name: str,
+    max_turns: int,
+    reference_code: str,
+    metadata: Dict[str, Any],
+) -> str:
+    """Build rich initial task message with metadata and full reference code."""
+    precisions = ", ".join(metadata.get("supported_precisions", [])) or "unknown"
+    hardware_required = ", ".join(metadata.get("hardware_required", [])) or "unknown"
+    return f"""Optimize the benchmark task and produce `/workspace/solution.py`.
+
+Task summary:
+- benchmark backend: `{backend}`
+- problem: `{problem_name}`
+- level: `{level}`
+- target GPU: `{gpu_name}`
+- OP_TYPE: `{metadata.get("op_type", "unknown")}`
+- SUPPORTED_PRECISIONS: `{precisions}`
+- HARDWARE_REQUIRED: `{hardware_required}`
+
+Mirrored workspace files (same content already provided inline in system context):
+- `/workspace/reference.py`
+- `/workspace/ENVIRONMENT.md`
+- `/workspace/BACKEND_API.md`
+- `/workspace/TEMPLATE_solution.py`
+- `/workspace/TASK_CONTEXT.md`
+
+Rules:
+- Preserve `Model`, `get_inputs`, and `get_init_inputs` compatibility with `reference.py`.
+- Run one compile/import/forward self-check, then submit immediately.
+- Avoid environment probing beyond one lightweight check.
+
+Turn budget (hard cap):
+- You have exactly `{max_turns}` turns.
+- Use turn 1 to inspect/reference and write a complete draft.
+- Use intermediate turns only to fix concrete compile/runtime errors.
+- On the final turn, if a `submit` tool is available, submit your best current `solution.py` even if still imperfect.
+- Do not finish without either submitting or clearly reporting a blocking compile error.
+
+Reference code:
+```python
+{reference_code}
+```
+"""
+
+
 GPU_SPECS = {
     "L40S": ("L40S", 48),
     "A100": ("A100", 40),
     "H100": ("H100", 80),
     "B200": ("B200", 192),
+    "RTX3090": ("RTX 3090", 24),
+    "LOCAL": ("Local CUDA GPU", 24),
+}
+
+LOCAL_GPUS = {"RTX3090", "LOCAL"}
+
+# Wall-clock timeout fallback per problem (seconds).
+MAX_PROBLEM_TIME_SECONDS = {
+    1: 300,   # L1: 5 minutes
+    2: 600,   # L2: 10 minutes
+    3: 900,   # L3: 15 minutes
+    4: 1200,  # L4: 20 minutes
 }
 
 
@@ -487,6 +1207,14 @@ class EvalResult:
     speedup: Optional[float] = None
     ref_ms: Optional[float] = None
     sol_ms: Optional[float] = None
+    ref_mean_ms: Optional[float] = None
+    sol_mean_ms: Optional[float] = None
+    ref_std_ms: Optional[float] = None
+    sol_std_ms: Optional[float] = None
+    ref_p10_ms: Optional[float] = None
+    ref_p90_ms: Optional[float] = None
+    sol_p10_ms: Optional[float] = None
+    sol_p90_ms: Optional[float] = None
     turns: int = 0
     submitted: bool = False
     error: Optional[str] = None
@@ -502,15 +1230,174 @@ class EvalResult:
     estimated_cost_usd: Optional[float] = None
     # Solution code (the submitted kernel)
     solution_code: Optional[str] = None
+    solution_path: Optional[str] = None
+    solution_hash: Optional[str] = None
     # Kernel count tracking (for megakernel verification)
     ref_kernels: Optional[int] = None
     sol_kernels: Optional[int] = None
+    # Benchmark metadata
+    correctness_seeds: Optional[List[int]] = None
+    benchmark_seed: Optional[int] = None
+    baseline_type: Optional[str] = None
+    precision: Optional[str] = None
+    precision_used: Optional[str] = None
+    valid_precisions: Optional[List[str]] = None
+    precision_supported: Optional[bool] = None
+    tolerance_atol: float = 0.05
+    tolerance_rtol: float = 0.02
+    has_nan: bool = False
+    has_inf: bool = False
+    is_deterministic: bool = True
+    # Performance metadata
+    achieved_tflops: Optional[float] = None
+    ref_tflops: Optional[float] = None
+    pct_of_peak: Optional[float] = None
+    ref_pct_of_peak: Optional[float] = None
+
+
+def _get_turn_artifact_dir() -> Optional[Path]:
+    """Get per-turn artifact directory from environment, if configured."""
+    raw = os.environ.get("KB_TURN_ARTIFACT_DIR")
+    if not raw:
+        return None
+    artifact_dir = Path(raw)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    return artifact_dir
+
+
+def _write_turn_artifact(turn: int, suffix: str, content: str) -> None:
+    """Persist per-turn artifacts for debugging (best-effort)."""
+    artifact_dir = _get_turn_artifact_dir()
+    if artifact_dir is None:
+        return
+
+    try:
+        path = artifact_dir / f"turn_{turn}_{suffix}"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception:
+        # Artifact persistence is diagnostics-only and must never break eval.
+        pass
+
+
+def _format_command_result(cmd: str, cmd_result: dict) -> str:
+    """Format command execution result for logs/artifacts."""
+    return (
+        f"command: {cmd}\n"
+        f"return_code: {cmd_result.get('returncode')}\n"
+        f"stdout:\n{cmd_result.get('stdout', '')}\n"
+        f"stderr:\n{cmd_result.get('stderr', '')}\n"
+    )
+
+
+def _auto_submit_if_compilable(sandbox, submitted: bool, solution_path: Optional[str]) -> tuple[bool, Optional[str]]:
+    """Auto-submit solution.py when model forgot submit tool but code imports."""
+    if submitted:
+        return submitted, solution_path
+
+    if not sandbox.file_exists("solution.py"):
+        return submitted, solution_path
+
+    compile_checks = [
+        ('python -c "from solution import Model; m = Model(); print(\'OK\')"', "Model import check OK"),
+        ('python -c "import solution; print(\'OK\')"', "module import check OK"),
+    ]
+    compile_logs: List[str] = []
+
+    for compile_cmd, success_label in compile_checks:
+        compile_result = sandbox.run_command(compile_cmd, timeout=120)
+        compile_logs.append(_format_command_result(compile_cmd, compile_result))
+        if compile_result["returncode"] == 0 and "OK" in compile_result["stdout"]:
+            _write_turn_artifact(999, "compile.log", "\n\n".join(compile_logs))
+            print(f"  AUTO-SUBMITTED: solution.py ({success_label})", flush=True)
+            return True, "solution.py"
+
+    _write_turn_artifact(999, "compile.log", "\n\n".join(compile_logs))
+
+    return submitted, solution_path
+
+
+def _begin_problem_alarm(level: int) -> Optional[Any]:
+    """Enable SIGALRM timeout for a problem, returning previous handler."""
+    timeout_seconds = MAX_PROBLEM_TIME_SECONDS.get(level)
+    if timeout_seconds is None or timeout_seconds <= 0:
+        return None
+    if not hasattr(signal, "SIGALRM"):
+        return None
+
+    def _timeout_handler(_signum, _frame):
+        raise TimeoutError("Problem time limit exceeded")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout_seconds)
+    return previous_handler
+
+
+def _clear_problem_alarm(previous_handler: Optional[Any]) -> None:
+    """Disable SIGALRM timeout and restore previous handler."""
+    if previous_handler is None:
+        return
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _attach_solution_metadata(result: EvalResult, solution_path: Optional[str], sandbox) -> None:
+    """Load solution code and attach hash/path metadata to result."""
+    if not solution_path:
+        return
+    sol_path = solution_path if solution_path.startswith("/") else f"/workspace/{solution_path}"
+    solution_code = sandbox.read_file(sol_path.replace("/workspace/", ""))
+    result.solution_code = solution_code
+    result.solution_path = solution_path
+    if solution_code is not None:
+        result.solution_hash = hashlib.sha256(solution_code.encode("utf-8")).hexdigest()[:16]
+
+
+def _apply_benchmark_metrics(result: EvalResult, benchmark_result: Dict[str, Any]) -> None:
+    """Populate EvalResult fields from benchmark output."""
+    result.compiled = benchmark_result.get("compiled", False)
+    result.correct = benchmark_result.get("correct", False)
+    result.speedup = benchmark_result.get("speedup")
+    result.ref_ms = benchmark_result.get("ref_ms")
+    result.sol_ms = benchmark_result.get("sol_ms")
+    result.ref_mean_ms = benchmark_result.get("ref_mean_ms")
+    result.sol_mean_ms = benchmark_result.get("sol_mean_ms")
+    result.ref_std_ms = benchmark_result.get("ref_std_ms")
+    result.sol_std_ms = benchmark_result.get("sol_std_ms")
+    result.ref_p10_ms = benchmark_result.get("ref_p10_ms")
+    result.ref_p90_ms = benchmark_result.get("ref_p90_ms")
+    result.sol_p10_ms = benchmark_result.get("sol_p10_ms")
+    result.sol_p90_ms = benchmark_result.get("sol_p90_ms")
+    result.ref_kernels = benchmark_result.get("ref_kernels")
+    result.sol_kernels = benchmark_result.get("sol_kernels")
+
+    result.correctness_seeds = benchmark_result.get("correctness_seeds")
+    result.benchmark_seed = benchmark_result.get("benchmark_seed")
+    result.baseline_type = benchmark_result.get("baseline_type")
+    result.precision = benchmark_result.get("precision") or benchmark_result.get("precision_used")
+    result.precision_used = benchmark_result.get("precision_used") or benchmark_result.get("precision")
+    result.valid_precisions = benchmark_result.get("valid_precisions")
+    result.precision_supported = benchmark_result.get("precision_supported")
+    result.tolerance_atol = benchmark_result.get("tolerance_atol", result.tolerance_atol)
+    result.tolerance_rtol = benchmark_result.get("tolerance_rtol", result.tolerance_rtol)
+    result.has_nan = benchmark_result.get("has_nan", False)
+    result.has_inf = benchmark_result.get("has_inf", False)
+    result.is_deterministic = benchmark_result.get("is_deterministic", True)
+    result.achieved_tflops = benchmark_result.get("achieved_tflops")
+    result.ref_tflops = benchmark_result.get("ref_tflops")
+    result.pct_of_peak = benchmark_result.get("pct_of_peak")
+    result.ref_pct_of_peak = benchmark_result.get("ref_pct_of_peak")
+
+    if benchmark_result.get("error"):
+        result.error = benchmark_result["error"]
 
 
 def _run_gemini_agent(
     model_config: ModelConfig,
     sandbox,
     system_prompt: str,
+    initial_user_message: str,
     max_turns: int
 ) -> tuple:
     """Run Gemini 3 agent using native SDK with automatic function calling.
@@ -562,7 +1449,7 @@ def _run_gemini_agent(
     total_output_tokens = 0
 
     # Initial message
-    response = chat.send_message("Optimize the model in reference.py.")
+    response = chat.send_message(initial_user_message)
 
     # Track tokens from initial response
     if hasattr(response, 'usage_metadata') and response.usage_metadata:
@@ -588,6 +1475,7 @@ def _run_gemini_agent(
             text = " ".join(text_parts)
             text = text[:200] + "..." if len(text) > 200 else text
             print(f"Assistant: {text}", flush=True)
+        _write_turn_artifact(turn + 1, "response.txt", "\n".join(text_parts))
 
         if not function_calls:
             print("No tool calls - agent finished", flush=True)
@@ -605,6 +1493,7 @@ def _run_gemini_agent(
                 print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
                 cmd_result = sandbox.run_command(cmd)
                 output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
+                _write_turn_artifact(turn + 1, "compile.log", _format_command_result(cmd, cmd_result))
                 if cmd_result["stdout"]:
                     out = cmd_result["stdout"][:150] + "..." if len(cmd_result["stdout"]) > 150 else cmd_result["stdout"]
                     print(f"    -> {out}", flush=True)
@@ -637,18 +1526,133 @@ def _run_gemini_agent(
             total_input_tokens += getattr(response.usage_metadata, 'prompt_token_count', 0)
             total_output_tokens += getattr(response.usage_metadata, 'candidates_token_count', 0)
 
+    submitted, solution_path = _auto_submit_if_compilable(sandbox, submitted, solution_path)
+    return submitted, solution_path, turns_used, total_input_tokens, total_output_tokens
+
+
+def _run_reasoning_agent(
+    model_config: ModelConfig,
+    sandbox,
+    system_prompt: str,
+    initial_user_message: str,
+    max_turns: int
+) -> tuple:
+    """Run reasoning model agent that extracts code from text output.
+
+    For models like kimi-k2.5 that use reasoning mode instead of tool calls.
+    The model outputs code directly in markdown blocks, which we extract and test.
+
+    Returns: (submitted, solution_path, turns_used, input_tokens, output_tokens)
+    """
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=os.environ.get("OPENROUTER_API_KEY"),
+        base_url="https://openrouter.ai/api/v1"
+    )
+
+    submitted = False
+    solution_path = "solution.py"
+    turns_used = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": initial_user_message}
+    ]
+
+    for turn in range(max_turns):
+        turns_used = turn + 1
+        print(f"\n[Turn {turn + 1}/{max_turns}]", flush=True)
+
+        try:
+            # Call API with reasoning enabled
+            response = client.chat.completions.create(
+                model=model_config.model_id,
+                messages=messages,
+                max_tokens=16384,
+                extra_body={"reasoning": {"enabled": True}}
+            )
+        except Exception as e:
+            print(f"API error: {e}", flush=True)
+            break
+
+        # Track tokens
+        if hasattr(response, 'usage') and response.usage:
+            input_toks = getattr(response.usage, 'prompt_tokens', 0)
+            output_toks = getattr(response.usage, 'completion_tokens', 0)
+            total_input_tokens += input_toks
+            total_output_tokens += output_toks
+
+        # Extract response content
+        content = response.choices[0].message.content or ""
+        text_preview = content[:300] + "..." if len(content) > 300 else content
+        print(f"Assistant: {text_preview}", flush=True)
+        _write_turn_artifact(turn + 1, "response.txt", content)
+
+        # Add assistant message to history
+        messages.append({"role": "assistant", "content": content})
+
+        # Extract Python code from response
+        code = extract_python_code(content)
+        if not code:
+            print("  No Python code found in response", flush=True)
+            messages.append({
+                "role": "user",
+                "content": "I couldn't find a Python code block in your response. Please provide the complete solution.py in a ```python code block."
+            })
+            continue
+
+        print(f"  Extracted {len(code)} chars of Python code", flush=True)
+
+        # Write code to sandbox
+        sandbox.write_file("solution.py", code)
+        _write_turn_artifact(turn + 1, "solution.py", code)
+
+        # Test if it compiles
+        print("  Testing compilation...", flush=True)
+        compile_result = sandbox.run_command(
+            'python -c "from solution import Model; m = Model(); print(\'OK\')"',
+            timeout=120
+        )
+        _write_turn_artifact(
+            turn + 1,
+            "compile.log",
+            _format_command_result('python -c "from solution import Model; m = Model(); print(\'OK\')"', compile_result),
+        )
+
+        if compile_result["returncode"] == 0 and "OK" in compile_result["stdout"]:
+            print("  Compilation: OK", flush=True)
+            submitted = True
+            break
+        else:
+            # Compilation failed - feed error back to model
+            error_msg = compile_result["stderr"] or compile_result["stdout"] or "Unknown error"
+            # Truncate very long errors
+            if len(error_msg) > 2000:
+                error_msg = error_msg[:2000] + "\n... (truncated)"
+            print(f"  Compilation FAILED: {error_msg[:200]}...", flush=True)
+
+            messages.append({
+                "role": "user",
+                "content": f"Your code failed to compile/import with this error:\n\n```\n{error_msg}\n```\n\nPlease fix the error and provide the corrected solution.py in a ```python code block."
+            })
+
+    submitted, solution_path = _auto_submit_if_compilable(sandbox, submitted, solution_path)
     return submitted, solution_path, turns_used, total_input_tokens, total_output_tokens
 
 
 def run_agent_on_modal(
     model_config: ModelConfig,
-    gpu: GPUType,
+    gpu: str,
     problem_code: str,
     problem_name: str,
     level: int,
-    max_turns: int = 20
+    max_turns: int = 20,
+    backend: str = "cuda",
 ) -> EvalResult:
-    """Run an LLM agent on Modal sandbox."""
+    """Run an LLM agent on Modal or local sandbox."""
     result = EvalResult(
         model=model_config.name,
         gpu=gpu,
@@ -659,18 +1663,48 @@ def run_agent_on_modal(
     start_time = time.time()
     gpu_name, vram = GPU_SPECS.get(gpu, ("Unknown", 80))
     system_prompt = get_system_prompt(gpu_name, vram, use_xml_tools=model_config.use_xml_tools)
+    system_prompt = _augment_system_prompt(system_prompt, backend=backend)
+    reference_metadata = _extract_reference_metadata(problem_code)
 
-    # Create Modal sandbox
-    sandbox = ModalSandbox(problem_code, ModalSandboxConfig(gpu=gpu, timeout=300, sandbox_timeout=3600))
+    # Create sandbox (Modal for cloud GPUs, local for RTX3090/LOCAL)
+    if gpu in LOCAL_GPUS:
+        sandbox = LocalSandbox(problem_code, LocalSandboxConfig(timeout=300))
+    else:
+        sandbox = ModalSandbox(problem_code, ModalSandboxConfig(gpu=gpu, timeout=300, sandbox_timeout=3600))
 
+    alarm_handler = _begin_problem_alarm(level)
     try:
         sandbox.start()
         print(f"Sandbox started: {sandbox.get_gpu_info()}", flush=True)
+        context_bundle = _prepare_workspace_context(
+            backend=backend,
+            gpu_name=gpu_name,
+            vram_gb=vram,
+            level=level,
+            problem_name=problem_name,
+            metadata=reference_metadata,
+            sandbox=sandbox,
+        )
+        _seed_workspace_context(sandbox=sandbox, context_bundle=context_bundle)
+        system_prompt = _inject_workspace_context(system_prompt, context_bundle)
+        initial_user_message = _build_initial_user_message(
+            backend=backend,
+            problem_name=problem_name,
+            level=level,
+            gpu_name=gpu_name,
+            max_turns=max_turns,
+            reference_code=problem_code,
+            metadata=reference_metadata,
+        )
 
         # Use dedicated Gemini handler for native SDK
         if model_config.provider == "gemini":
             submitted, solution_path, turns_used, input_tokens, output_tokens = _run_gemini_agent(
-                model_config, sandbox, system_prompt, max_turns
+                model_config,
+                sandbox,
+                system_prompt,
+                initial_user_message,
+                max_turns,
             )
             result.turns = turns_used
             result.submitted = submitted
@@ -688,20 +1722,58 @@ def run_agent_on_modal(
                 print("RUNNING BENCHMARK", flush=True)
                 print("=" * 60, flush=True)
 
-                # Read solution code before benchmark
-                sol_path = solution_path if solution_path.startswith("/") else f"/workspace/{solution_path}"
-                result.solution_code = sandbox.read_file(sol_path.replace("/workspace/", ""))
+                _attach_solution_metadata(result, solution_path, sandbox)
+                benchmark_result = _run_benchmark(
+                    sandbox,
+                    solution_path,
+                    hardware=gpu,
+                    level=level,
+                    backend=backend,
+                )
+                _apply_benchmark_metrics(result, benchmark_result)
+            else:
+                result.error = "No solution submitted"
 
-                benchmark_result = _run_benchmark(sandbox, solution_path)
-                result.compiled = benchmark_result.get("compiled", False)
-                result.correct = benchmark_result.get("correct", False)
-                result.speedup = benchmark_result.get("speedup")
-                result.ref_ms = benchmark_result.get("ref_ms")
-                result.sol_ms = benchmark_result.get("sol_ms")
-                result.ref_kernels = benchmark_result.get("ref_kernels")
-                result.sol_kernels = benchmark_result.get("sol_kernels")
-                if benchmark_result.get("error"):
-                    result.error = benchmark_result["error"]
+            result.elapsed_seconds = time.time() - start_time
+            return result
+
+        # Use dedicated reasoning handler for models without tool use
+        if model_config.reasoning_mode:
+            reasoning_prompt = get_reasoning_system_prompt(gpu_name, vram)
+            reasoning_prompt = _augment_system_prompt(reasoning_prompt, backend=backend)
+            reasoning_prompt = _inject_workspace_context(reasoning_prompt, context_bundle)
+            submitted, solution_path, turns_used, input_tokens, output_tokens = _run_reasoning_agent(
+                model_config,
+                sandbox,
+                reasoning_prompt,
+                initial_user_message,
+                max_turns,
+            )
+            result.turns = turns_used
+            result.submitted = submitted
+            result.input_tokens = input_tokens
+            result.output_tokens = output_tokens
+            result.total_tokens = input_tokens + output_tokens
+            result.estimated_cost_usd = _estimate_cost(model_config.model_id, model_config.provider, input_tokens, output_tokens)
+
+            print(f"\n[Token Usage] Input: {input_tokens:,} | Output: {output_tokens:,} | Total: {input_tokens + output_tokens:,}", flush=True)
+            if result.estimated_cost_usd:
+                print(f"[Est. Cost] ${result.estimated_cost_usd:.4f}", flush=True)
+
+            if submitted and solution_path:
+                print("\n" + "=" * 60, flush=True)
+                print("RUNNING BENCHMARK", flush=True)
+                print("=" * 60, flush=True)
+
+                _attach_solution_metadata(result, solution_path, sandbox)
+                benchmark_result = _run_benchmark(
+                    sandbox,
+                    solution_path,
+                    hardware=gpu,
+                    level=level,
+                    backend=backend,
+                )
+                _apply_benchmark_metrics(result, benchmark_result)
             else:
                 result.error = "No solution submitted"
 
@@ -713,11 +1785,11 @@ def run_agent_on_modal(
         messages = []
 
         if model_config.provider == "anthropic":
-            messages = [{"role": "user", "content": "Optimize the model in reference.py."}]
+            messages = [{"role": "user", "content": initial_user_message}]
         else:
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": "Optimize the model in reference.py."}
+                {"role": "user", "content": initial_user_message},
             ]
 
         submitted = False
@@ -755,6 +1827,11 @@ def run_agent_on_modal(
             if isinstance(assistant_content, str) and assistant_content:
                 text = assistant_content[:200] + "..." if len(assistant_content) > 200 else assistant_content
                 print(f"Assistant: {text}", flush=True)
+            turn_payload = {
+                "assistant_content": assistant_content,
+                "tool_calls": tool_calls,
+            }
+            _write_turn_artifact(turn + 1, "response.txt", json.dumps(turn_payload, indent=2, default=str))
 
             # Add assistant message
             messages.append(_format_assistant_message(assistant_content, tool_calls, model_config))
@@ -765,6 +1842,7 @@ def run_agent_on_modal(
 
             # Execute tools
             tool_results = []
+            turn_tool_logs: List[str] = []
             for tc in tool_calls:
                 tool_name = tc["name"]
                 tool_input = tc["input"]
@@ -777,6 +1855,7 @@ def run_agent_on_modal(
                     print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
                     cmd_result = sandbox.run_command(cmd)
                     output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
+                    turn_tool_logs.append(_format_command_result(cmd, cmd_result))
                     if cmd_result["stdout"]:
                         out = cmd_result["stdout"][:150] + "..." if len(cmd_result["stdout"]) > 150 else cmd_result["stdout"]
                         print(f"    -> {out}", flush=True)
@@ -789,11 +1868,19 @@ def run_agent_on_modal(
                     print(f"  SUBMITTED: {solution_path}", flush=True)
                     tool_results.append({"id": tool_id, "name": tool_name, "content": f"Submitted: {solution_path}"})
 
+            _write_turn_artifact(turn + 1, "compile.log", "\n\n".join(turn_tool_logs))
+            if sandbox.file_exists("solution.py"):
+                sol_snapshot = sandbox.read_file("solution.py") or ""
+                _write_turn_artifact(turn + 1, "solution.py", sol_snapshot)
+
             # Add tool results to messages
             messages.extend(_format_tool_results(tool_results, model_config))
 
             if submitted:
                 break
+
+        submitted, solution_path = _auto_submit_if_compilable(sandbox, submitted, solution_path)
+        result.submitted = submitted
 
         # Store token usage (including cache stats)
         result.input_tokens = total_input_tokens
@@ -821,30 +1908,28 @@ def run_agent_on_modal(
             print("RUNNING BENCHMARK", flush=True)
             print("=" * 60, flush=True)
 
-            # Read solution code before benchmark
-            sol_path = solution_path if solution_path.startswith("/") else f"/workspace/{solution_path}"
-            result.solution_code = sandbox.read_file(sol_path.replace("/workspace/", ""))
-
-            benchmark_result = _run_benchmark(sandbox, solution_path)
-            result.compiled = benchmark_result.get("compiled", False)
-            result.correct = benchmark_result.get("correct", False)
-            result.speedup = benchmark_result.get("speedup")
-            result.ref_ms = benchmark_result.get("ref_ms")
-            result.sol_ms = benchmark_result.get("sol_ms")
-            result.ref_kernels = benchmark_result.get("ref_kernels")
-            result.sol_kernels = benchmark_result.get("sol_kernels")
-            if benchmark_result.get("error"):
-                result.error = benchmark_result["error"]
+            _attach_solution_metadata(result, solution_path, sandbox)
+            benchmark_result = _run_benchmark(
+                sandbox,
+                solution_path,
+                hardware=gpu,
+                level=level,
+                backend=backend,
+            )
+            _apply_benchmark_metrics(result, benchmark_result)
 
         else:
             result.error = "No solution submitted"
 
+    except TimeoutError:
+        result.error = "timeout_exceeded"
     except Exception as e:
         import traceback
         traceback.print_exc()
         result.error = str(e)
 
     finally:
+        _clear_problem_alarm(alarm_handler)
         sandbox.stop()
 
     result.elapsed_seconds = time.time() - start_time
@@ -1110,102 +2195,517 @@ def _format_tool_results(tool_results: list, model_config: ModelConfig) -> list:
         ]
 
 
-def _run_benchmark(sandbox: ModalSandbox, solution_path: str) -> dict:
-    """Run benchmark on the solution."""
-    # Normalize path
+def _run_benchmark(
+    sandbox: ModalSandbox,
+    solution_path: str,
+    hardware: Optional[str] = None,
+    level: Optional[int] = None,
+    backend: str = "cuda",
+) -> dict:
+    """Run benchmark on the submitted solution."""
     if not solution_path.startswith("/"):
         solution_path = f"/workspace/{solution_path}"
 
-    # Check solution exists
     if not sandbox.file_exists(solution_path.replace("/workspace/", "")):
         return {"compiled": False, "error": f"Solution not found: {solution_path}"}
 
-    benchmark_script = '''
-import torch, time, json, sys, traceback
+    solution_code = sandbox.read_file(solution_path.replace("/workspace/", ""))
+    guardrail_error = validate_solution_guardrails(solution_code, backend=backend)
+    if guardrail_error:
+        return {
+            "compiled": False,
+            "correct": False,
+            "speedup": None,
+            "error": guardrail_error,
+        }
+
+    benchmark_template = '''
+import json
+import importlib.util
+import statistics
+import sys
+import traceback
+
+import torch
+
 device = torch.device("cuda:0")
+HARDWARE = __HARDWARE__
+HARDWARE_PRECISIONS = __HARDWARE_PRECISIONS__
+OP_PRECISION_VALIDITY = __OP_PRECISION_VALIDITY__
+HARDWARE_PEAK_TFLOPS = __HARDWARE_PEAK_TFLOPS__
+
+def dtype_to_precision(dtype):
+    text = str(dtype)
+    if "float8" in text:
+        return "fp8"
+    if "bfloat16" in text:
+        return "bf16"
+    if "float16" in text:
+        return "fp16"
+    if "float32" in text:
+        return "fp32"
+    if "float64" in text:
+        return "fp64"
+    return text.replace("torch.", "")
+
+def get_valid_precisions(hardware, op_type):
+    hw_precs = set(HARDWARE_PRECISIONS.get(hardware, ["fp32"]))
+    op_precs = set(OP_PRECISION_VALIDITY.get(op_type, ["fp32"]))
+    return sorted(hw_precs & op_precs)
+
+def infer_op_type(inputs):
+    if len(inputs) >= 2 and isinstance(inputs[0], torch.Tensor) and isinstance(inputs[1], torch.Tensor):
+        a, b = inputs[0], inputs[1]
+        if a.ndim == 2 and b.ndim == 2 and a.shape[1] == b.shape[0]:
+            return "gemm"
+    return "unknown"
+
+def infer_problem_size(op_type, inputs):
+    if op_type == "gemm" and len(inputs) >= 2 and isinstance(inputs[0], torch.Tensor) and isinstance(inputs[1], torch.Tensor):
+        a, b = inputs[0], inputs[1]
+        if a.ndim == 2 and b.ndim == 2 and a.shape[1] == b.shape[0]:
+            m = int(a.shape[0])
+            n = int(b.shape[1])
+            k = int(a.shape[1])
+            return [m, n, k]
+    return None
+
+def compute_tflops(op_type, problem_size, time_ms):
+    if not problem_size or not time_ms or time_ms <= 0:
+        return None
+    if op_type == "gemm":
+        m, n, k = problem_size
+        flops = 2 * m * n * k
+    elif op_type == "attention":
+        b, h, s, d = problem_size
+        flops = 4 * b * h * s * s * d
+    else:
+        return None
+    return (flops / 1e12) / (time_ms / 1000.0)
+
+def compute_percent_of_peak(achieved_tflops, hardware, precision):
+    if achieved_tflops is None:
+        return None
+    peak = HARDWARE_PEAK_TFLOPS.get(hardware, {}).get(precision)
+    if peak is None or peak <= 0:
+        return None
+    return (achieved_tflops / peak) * 100.0
+
+PRECISION_TOLERANCES = {
+    "fp4": {"atol": 0.5, "rtol": 0.1},
+    "fp8": {"atol": 0.1, "rtol": 0.05},
+    "fp16": {"atol": 0.01, "rtol": 0.01},
+    "bf16": {"atol": 0.01, "rtol": 0.01},
+    "fp32": {"atol": 0.001, "rtol": 0.001},
+}
+
+REPEATABILITY_CHECK = True
+REPEATABILITY_RUNS = 2
+
+def get_tolerance(precision):
+    return PRECISION_TOLERANCES.get(precision, {"atol": 0.05, "rtol": 0.02})
+
+def check_valid_output(tensor, name="output"):
+    has_nan = torch.isnan(tensor).any().item()
+    has_inf = torch.isinf(tensor).any().item()
+    if has_nan:
+        return False, f"{name} contains NaN", True, bool(has_inf)
+    if has_inf:
+        return False, f"{name} contains Inf", bool(has_nan), True
+    return True, "", False, False
+
 try:
-    ref_ns, sol_ns = {}, {}
-    exec(open("reference.py").read(), ref_ns)
-    exec(open("solution.py").read(), sol_ns)
-    RefModel, SolModel = ref_ns["Model"], sol_ns["Model"]
-    get_inputs, get_init_inputs = ref_ns["get_inputs"], ref_ns["get_init_inputs"]
+    def load_module(module_name, file_path):
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Failed to load module from {file_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    reference_module = load_module("kb_reference", "reference.py")
+    solution_module = load_module("kb_solution", "solution.py")
+    RefModel, SolModel = reference_module.Model, solution_module.Model
+    get_inputs = reference_module.get_inputs
+    get_init_inputs = reference_module.get_init_inputs
+
+    op_type = str(getattr(reference_module, "OP_TYPE", "unknown")).lower()
+    declared_supported_precisions = getattr(reference_module, "SUPPORTED_PRECISIONS", [])
+    if not isinstance(declared_supported_precisions, (list, tuple)):
+        declared_supported_precisions = []
+    declared_supported_precisions = [str(p).lower() for p in declared_supported_precisions]
 
     print("Loading models...", flush=True)
     ref_model = RefModel(*get_init_inputs()).to(device).eval()
     sol_model = SolModel(*get_init_inputs()).to(device).eval()
-    inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in get_inputs()]
-
-    print("Checking correctness...", flush=True)
-    with torch.no_grad():
-        ref_out, sol_out = ref_model(*inputs), sol_model(*inputs)
-    ref_f, sol_f = ref_out.float(), sol_out.float()
-    max_diff = (ref_f - sol_f).abs().max().item() if isinstance(ref_out, torch.Tensor) else 0
-    # Use proper tolerance: atol + rtol * |ref| (matches torch.allclose behavior)
-    atol, rtol = 0.05, 0.02
-    max_ref = ref_f.abs().max().item() if isinstance(ref_out, torch.Tensor) else 1.0
-    tolerance = atol + rtol * max_ref
-    correct = max_diff < tolerance
-    print(f"max_diff: {max_diff:.6f}, tolerance: {tolerance:.6f}, correct: {correct}", flush=True)
-
-    if not correct:
-        print(json.dumps({"compiled": True, "correct": False, "speedup": None, "error": f"max_diff={max_diff}"}))
+    if not torch.cuda.is_available():
+        print(json.dumps({"compiled": False, "correct": False, "speedup": None, "error": "CUDA unavailable in benchmark runtime"}))
         sys.exit(0)
 
-    # Count kernel launches for reference and solution
-    def count_kernels(model, inputs):
+    CORRECTNESS_SEEDS = [42, 123, 456, 789, 1337]
+    worst_max_diff, worst_tolerance, worst_seed = 0.0, 0.0, CORRECTNESS_SEEDS[0]
+    precision = "fp32"
+    tol = get_tolerance(precision)
+    has_nan = False
+    has_inf = False
+    is_deterministic = True
+
+    print("Checking correctness across seeds...", flush=True)
+    for seed in CORRECTNESS_SEEDS:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in get_inputs()]
+        for value in inputs:
+            if isinstance(value, torch.Tensor):
+                precision = dtype_to_precision(value.dtype)
+                break
+        tol = get_tolerance(precision)
+        with torch.no_grad():
+            ref_out, sol_out = ref_model(*inputs), sol_model(*inputs)
+
+        if not isinstance(ref_out, torch.Tensor) or not isinstance(sol_out, torch.Tensor):
+            print(json.dumps({
+                "compiled": False,
+                "correct": False,
+                "speedup": None,
+                "error": "Only tensor outputs are supported",
+                "precision_used": precision,
+                "tolerance_atol": tol["atol"],
+                "tolerance_rtol": tol["rtol"],
+                "has_nan": has_nan,
+                "has_inf": has_inf,
+                "is_deterministic": is_deterministic,
+            }))
+            sys.exit(0)
+        if ref_out.shape != sol_out.shape:
+            print(json.dumps({
+                "compiled": True,
+                "correct": False,
+                "speedup": None,
+                "error": f"shape_mismatch_seed={seed}: {tuple(ref_out.shape)} vs {tuple(sol_out.shape)}",
+                "precision_used": precision,
+                "tolerance_atol": tol["atol"],
+                "tolerance_rtol": tol["rtol"],
+                "has_nan": has_nan,
+                "has_inf": has_inf,
+                "is_deterministic": is_deterministic,
+            }))
+            sys.exit(0)
+
+        ref_valid, ref_error, ref_has_nan, ref_has_inf = check_valid_output(ref_out, "reference output")
+        sol_valid, sol_error, sol_has_nan, sol_has_inf = check_valid_output(sol_out, "solution output")
+        has_nan = has_nan or ref_has_nan or sol_has_nan
+        has_inf = has_inf or ref_has_inf or sol_has_inf
+        if not ref_valid:
+            print(json.dumps({
+                "compiled": True,
+                "correct": False,
+                "speedup": None,
+                "error": ref_error,
+                "precision_used": precision,
+                "tolerance_atol": tol["atol"],
+                "tolerance_rtol": tol["rtol"],
+                "has_nan": has_nan,
+                "has_inf": has_inf,
+                "is_deterministic": is_deterministic,
+            }))
+            sys.exit(0)
+        if not sol_valid:
+            print(json.dumps({
+                "compiled": True,
+                "correct": False,
+                "speedup": None,
+                "error": sol_error,
+                "precision_used": precision,
+                "tolerance_atol": tol["atol"],
+                "tolerance_rtol": tol["rtol"],
+                "has_nan": has_nan,
+                "has_inf": has_inf,
+                "is_deterministic": is_deterministic,
+            }))
+            sys.exit(0)
+
+        ref_f, sol_f = ref_out.float(), sol_out.float()
+        max_diff = (ref_f - sol_f).abs().max().item()
+        max_ref = ref_f.abs().max().item()
+        tolerance = tol["atol"] + tol["rtol"] * max_ref
+        if max_diff > worst_max_diff:
+            worst_max_diff = max_diff
+            worst_tolerance = tolerance
+            worst_seed = seed
+        if max_diff >= tolerance:
+            print(json.dumps({
+                "compiled": True,
+                "correct": False,
+                "speedup": None,
+                "error": f"seed={seed}, max_diff={max_diff}",
+                "precision_used": precision,
+                "tolerance_atol": tol["atol"],
+                "tolerance_rtol": tol["rtol"],
+                "has_nan": has_nan,
+                "has_inf": has_inf,
+                "is_deterministic": is_deterministic,
+            }))
+            sys.exit(0)
+
+    print(f"worst_seed: {worst_seed}, max_diff: {worst_max_diff:.6f}, tolerance: {worst_tolerance:.6f}", flush=True)
+
+    benchmark_seed = 2026
+    torch.manual_seed(benchmark_seed)
+    torch.cuda.manual_seed_all(benchmark_seed)
+    bench_inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in get_inputs()]
+
+    if op_type == "unknown":
+        op_type = infer_op_type(bench_inputs)
+
+    precision = "fp32"
+    for value in bench_inputs:
+        if isinstance(value, torch.Tensor):
+            precision = dtype_to_precision(value.dtype)
+            break
+    tol = get_tolerance(precision)
+
+    valid_precisions = get_valid_precisions(HARDWARE, op_type)
+    if declared_supported_precisions:
+        valid_precisions = sorted(set(valid_precisions) & set(declared_supported_precisions))
+    precision_supported = precision in valid_precisions if valid_precisions else None
+    baseline_type = "cutlass" if precision == "fp4" and HARDWARE == "B200" else "pytorch"
+
+    problem_size = infer_problem_size(op_type, bench_inputs)
+
+    if REPEATABILITY_CHECK:
+        repeat_outputs = []
+        for _ in range(REPEATABILITY_RUNS):
+            with torch.no_grad():
+                repeat_out = sol_model(*bench_inputs)
+            torch.cuda.synchronize()
+            repeat_outputs.append(repeat_out.clone())
+
+        for idx in range(1, len(repeat_outputs)):
+            if not torch.equal(repeat_outputs[0], repeat_outputs[idx]):
+                is_deterministic = False
+                print(json.dumps({
+                    "compiled": True,
+                    "correct": False,
+                    "speedup": None,
+                    "error": "Non-deterministic output (possible race condition)",
+                    "precision_used": precision,
+                    "tolerance_atol": tol["atol"],
+                    "tolerance_rtol": tol["rtol"],
+                    "has_nan": has_nan,
+                    "has_inf": has_inf,
+                    "is_deterministic": is_deterministic,
+                }))
+                sys.exit(0)
+
+    def count_kernels(model, model_inputs):
         torch.cuda.synchronize()
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as prof:
             with torch.no_grad():
-                model(*inputs)
+                model(*model_inputs)
         torch.cuda.synchronize()
-        # Count CUDA kernel events
-        kernel_count = sum(1 for e in prof.key_averages() if e.device_type == torch.profiler.DeviceType.CUDA)
-        return kernel_count
+        return sum(1 for e in prof.key_averages() if e.device_type == torch.profiler.DeviceType.CUDA)
 
-    ref_kernels = count_kernels(ref_model, inputs)
-    sol_kernels = count_kernels(sol_model, inputs)
+    ref_kernels = count_kernels(ref_model, bench_inputs)
+    sol_kernels = count_kernels(sol_model, bench_inputs)
     print(f"Kernel count: ref={ref_kernels}, sol={sol_kernels}", flush=True)
 
     print("Benchmarking...", flush=True)
-    torch.cuda.synchronize()
-    for _ in range(3):
-        with torch.no_grad(): ref_model(*inputs); sol_model(*inputs)
-    torch.cuda.synchronize()
+    WARMUP_ITERS = 5
+    TIMED_ITERS = 30
 
-    start = time.perf_counter()
-    for _ in range(10):
-        with torch.no_grad(): ref_model(*inputs)
-    torch.cuda.synchronize()
-    ref_time = (time.perf_counter() - start) / 10
+    def summarize_runtime_ms(model, model_inputs):
+        for _ in range(WARMUP_ITERS):
+            with torch.no_grad():
+                model(*model_inputs)
+        torch.cuda.synchronize()
 
-    start = time.perf_counter()
-    for _ in range(10):
-        with torch.no_grad(): sol_model(*inputs)
-    torch.cuda.synchronize()
-    sol_time = (time.perf_counter() - start) / 10
+        times_ms = []
+        for _ in range(TIMED_ITERS):
+            start_evt = torch.cuda.Event(enable_timing=True)
+            end_evt = torch.cuda.Event(enable_timing=True)
+            start_evt.record()
+            with torch.no_grad():
+                model(*model_inputs)
+            end_evt.record()
+            torch.cuda.synchronize()
+            times_ms.append(start_evt.elapsed_time(end_evt))
 
-    print(json.dumps({"compiled": True, "correct": True, "speedup": ref_time/sol_time, "ref_ms": ref_time*1000, "sol_ms": sol_time*1000, "ref_kernels": ref_kernels, "sol_kernels": sol_kernels}))
+        ordered = sorted(times_ms)
+        n = len(ordered)
+        p10_idx = int(0.10 * (n - 1))
+        p90_idx = int(0.90 * (n - 1))
+        return {
+            "median": statistics.median(ordered),
+            "mean": statistics.mean(ordered),
+            "std": statistics.pstdev(ordered),
+            "p10": ordered[p10_idx],
+            "p90": ordered[p90_idx],
+        }
+
+    ref_stats = summarize_runtime_ms(ref_model, bench_inputs)
+    sol_stats = summarize_runtime_ms(sol_model, bench_inputs)
+    ref_ms, sol_ms = ref_stats["median"], sol_stats["median"]
+    ref_mean_ms, sol_mean_ms = ref_stats["mean"], sol_stats["mean"]
+    ref_std_ms, sol_std_ms = ref_stats["std"], sol_stats["std"]
+    ref_p10_ms, ref_p90_ms = ref_stats["p10"], ref_stats["p90"]
+    sol_p10_ms, sol_p90_ms = sol_stats["p10"], sol_stats["p90"]
+
+    ref_tflops = compute_tflops(op_type, problem_size, ref_ms)
+    achieved_tflops = compute_tflops(op_type, problem_size, sol_ms)
+    ref_pct_of_peak = compute_percent_of_peak(ref_tflops, HARDWARE, precision)
+    pct_of_peak = compute_percent_of_peak(achieved_tflops, HARDWARE, precision)
+
+    print(json.dumps({
+        "compiled": True,
+        "correct": True,
+        "speedup": ref_ms / sol_ms,
+        "ref_ms": ref_ms,
+        "sol_ms": sol_ms,
+        "ref_mean_ms": ref_mean_ms,
+        "sol_mean_ms": sol_mean_ms,
+        "ref_std_ms": ref_std_ms,
+        "sol_std_ms": sol_std_ms,
+        "ref_p10_ms": ref_p10_ms,
+        "ref_p90_ms": ref_p90_ms,
+        "sol_p10_ms": sol_p10_ms,
+        "sol_p90_ms": sol_p90_ms,
+        "ref_kernels": ref_kernels,
+        "sol_kernels": sol_kernels,
+        "seeds_tested": len(CORRECTNESS_SEEDS),
+        "correctness_seeds": CORRECTNESS_SEEDS,
+        "benchmark_seed": benchmark_seed,
+        "baseline_type": baseline_type,
+        "precision": precision,
+        "precision_used": precision,
+        "valid_precisions": valid_precisions,
+        "precision_supported": precision_supported,
+        "tolerance_atol": tol["atol"],
+        "tolerance_rtol": tol["rtol"],
+        "has_nan": has_nan,
+        "has_inf": has_inf,
+        "is_deterministic": is_deterministic,
+        "op_type": op_type,
+        "problem_size": problem_size,
+        "achieved_tflops": achieved_tflops,
+        "ref_tflops": ref_tflops,
+        "pct_of_peak": pct_of_peak,
+        "ref_pct_of_peak": ref_pct_of_peak,
+    }))
 except Exception as e:
     traceback.print_exc()
-    print(json.dumps({"compiled": False, "correct": False, "speedup": None, "error": str(e)}))
+    print(json.dumps({
+        "compiled": False,
+        "correct": False,
+        "speedup": None,
+        "error": str(e),
+        "precision_used": None,
+        "tolerance_atol": None,
+        "tolerance_rtol": None,
+        "has_nan": False,
+        "has_inf": False,
+        "is_deterministic": True,
+    }))
 '''
 
+    benchmark_script = (
+        benchmark_template
+        .replace("__HARDWARE__", json.dumps(hardware or "UNKNOWN"))
+        .replace("__HARDWARE_PRECISIONS__", json.dumps(HARDWARE_PRECISIONS))
+        .replace("__OP_PRECISION_VALIDITY__", json.dumps(OP_PRECISION_VALIDITY))
+        .replace("__HARDWARE_PEAK_TFLOPS__", json.dumps(HARDWARE_PEAK_TFLOPS))
+    )
+
     sandbox.write_file("_benchmark.py", benchmark_script)
-    result = sandbox.run_command("python _benchmark.py", timeout=600)
+    benchmark_timeout = MAX_PROBLEM_TIME_SECONDS.get(level or 1, 600) + 120
+    result = sandbox.run_command("python _benchmark.py", timeout=benchmark_timeout)
 
     print(f"Benchmark output:\n{result['stdout']}", flush=True)
     if result["stderr"]:
         print(f"Errors:\n{result['stderr']}", flush=True)
 
-    # Parse result
     for line in result["stdout"].split("\n"):
         if line.startswith("{"):
             try:
                 return json.loads(line)
-            except:
-                pass
+            except Exception:
+                continue
 
     return {"compiled": False, "error": "Failed to parse benchmark output"}
+
+
+FORBIDDEN_SOLUTION_PATTERNS = [
+    (
+        re.compile(r"torch::\s*(?:mm|matmul|conv1d|conv2d|conv3d|linear)\s*\("),
+        "Forbidden C++ wrapper fallback to PyTorch operator",
+    ),
+    (
+        re.compile(r"(?:^|[^\w])torch\.(?:mm|matmul|conv1d|conv2d|conv3d|linear)\s*\("),
+        "Forbidden Python fallback to PyTorch operator",
+    ),
+    (
+        re.compile(r"(?:^|[^\w])F\.(?:linear|conv1d|conv2d|conv3d)\s*\("),
+        "Forbidden Python fallback via torch.nn.functional",
+    ),
+    (
+        re.compile(r"(?:^|[^\w])torch\.compile\s*\("),
+        "Forbidden use of torch.compile",
+    ),
+    (
+        re.compile(r"@torch\.jit\.script"),
+        "Forbidden use of torch.jit.script",
+    ),
+]
+
+GRAPHICS_REQUIRED_PATTERNS = [
+    (
+        re.compile(r"(?:^|\n)\s*(?:import\s+triton\b|from\s+triton\b)"),
+        "Missing Triton import for GraphicsBench",
+    ),
+    (
+        re.compile(r"@triton\.jit"),
+        "Missing `@triton.jit` kernel for GraphicsBench",
+    ),
+    (
+        re.compile(r"[A-Za-z_]\w*\s*\[[^\]]+\]\s*\("),
+        "Missing Triton kernel launch `kernel[grid](...)` for GraphicsBench",
+    ),
+]
+
+GRAPHICS_FORBIDDEN_PATTERNS = [
+    (
+        re.compile(r"(?:^|[^\w])reference\.Model(?:\W|$)"),
+        "Forbidden direct fallback to reference model in GraphicsBench",
+    ),
+    (
+        re.compile(r"(?:^|\n)\s*(?:import\s+OpenGL\b|from\s+OpenGL\b)"),
+        "Forbidden OpenGL runtime path in GraphicsBench",
+    ),
+    (
+        re.compile(r"(?:^|\n)\s*(?:import\s+moderngl\b|from\s+moderngl\b)"),
+        "Forbidden Moderngl runtime path in GraphicsBench",
+    ),
+]
+
+def validate_solution_guardrails(solution_code: str, backend: str = "cuda") -> Optional[str]:
+    """Reject common reward-hacking shortcuts before expensive benchmarking."""
+    for pattern, message in FORBIDDEN_SOLUTION_PATTERNS:
+        match = pattern.search(solution_code)
+        if match:
+            snippet = match.group(0).strip()
+            return f"{message}: `{snippet}`"
+
+    if backend == "graphics":
+        for pattern, message in GRAPHICS_FORBIDDEN_PATTERNS:
+            match = pattern.search(solution_code)
+            if match:
+                snippet = match.group(0).strip()
+                return f"{message}: `{snippet}`"
+
+        for pattern, message in GRAPHICS_REQUIRED_PATTERNS:
+            if not pattern.search(solution_code):
+                return message
+    return None
 
 
 # =============================================================================
@@ -1231,7 +2731,7 @@ def find_problems(levels: List[int]) -> List[tuple]:
 def main():
     parser = argparse.ArgumentParser(description="Modal-based KernelBench Evaluation")
     parser.add_argument("--model", type=str, help="Model key (e.g., claude-opus-4.5)")
-    parser.add_argument("--gpu", type=str, default="H100", help="GPU type: L40S, A100, H100, B200")
+    parser.add_argument("--gpu", type=str, default="H100", help="GPU type: L40S, A100, H100, B200, RTX3090, LOCAL")
     parser.add_argument("--problem", type=str, help="Problem path (e.g., level4/1_Qwen3-0p6B_bs32_seq256.py)")
     parser.add_argument("--max-turns", type=int, default=20, help="Maximum turns per problem")
     parser.add_argument("--output-dir", type=str, default="outputs/modal_eval", help="Output directory")

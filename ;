@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""
+Validate all benchmark problem baselines work correctly.
+No LLM calls - just tests that reference implementations run.
+"""
+
+import sys
+import torch
+import importlib.util
+from pathlib import Path
+
+def load_problem(path: Path):
+    """Load a problem module."""
+    spec = importlib.util.spec_from_file_location("problem", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+def validate_problem(path: Path, device: str = "cpu") -> dict:
+    """Validate a single problem file."""
+    result = {
+        "path": str(path),
+        "has_model": False,
+        "has_get_inputs": False,
+        "has_get_init_inputs": False,
+        "model_instantiates": False,
+        "inputs_valid": False,
+        "forward_runs": False,
+        "output_valid": False,
+        "is_deterministic": False,
+        "error": None,
+    }
+    
+    try:
+        module = load_problem(path)
+        
+        # Check required components exist
+        result["has_model"] = hasattr(module, "Model")
+        result["has_get_inputs"] = hasattr(module, "get_inputs")
+        result["has_get_init_inputs"] = hasattr(module, "get_init_inputs")
+        
+        if not all([result["has_model"], result["has_get_inputs"]]):
+            result["error"] = "Missing Model or get_inputs"
+            return result
+        
+        # Try to instantiate model
+        init_inputs = module.get_init_inputs() if result["has_get_init_inputs"] else []
+        model = module.Model(*init_inputs).to(device)
+        result["model_instantiates"] = True
+        
+        # Get inputs
+        inputs = module.get_inputs()
+        inputs = [x.to(device) if isinstance(x, torch.Tensor) else x for x in inputs]
+        result["inputs_valid"] = all(
+            not (torch.isnan(x).any() or torch.isinf(x).any()) 
+            for x in inputs if isinstance(x, torch.Tensor)
+        )
+        
+        # Run forward pass
+        with torch.no_grad():
+            output1 = model(*inputs)
+        result["forward_runs"] = True
+        
+        # Check output validity
+        if isinstance(output1, torch.Tensor):
+            result["output_valid"] = not (torch.isnan(output1).any() or torch.isinf(output1).any())
+        else:
+            result["output_valid"] = True  # Assume valid for non-tensor outputs
+        
+        # Check determinism
+        with torch.no_grad():
+            output2 = model(*inputs)
+        if isinstance(output1, torch.Tensor) and isinstance(output2, torch.Tensor):
+            result["is_deterministic"] = torch.equal(output1, output2)
+        else:
+            result["is_deterministic"] = True
+            
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
+
+def main():
+    problems = list(Path("KernelBench").rglob("*.py"))
+    problems = [p for p in problems if not p.name.startswith("_")]
+    
+    results = []
+    failed = []
+    
+    print(f"Validating {len(problems)} problem baselines...\n")
+    
+    for p in sorted(problems):
+        result = validate_problem(p)
+        results.append(result)
+        
+        # Check if fully valid
+        is_valid = all([
+            result["has_model"],
+            result["has_get_inputs"],
+            result["model_instantiates"],
+            result["inputs_valid"],
+            result["forward_runs"],
+            result["output_valid"],
+            result["is_deterministic"],
+        ])
+        
+        status = "✅" if is_valid else "❌"
+        print(f"{status} {p.name}")
+        
+        if not is_valid:
+            failed.append(result)
+            if result["error"]:
+                print(f"   Error: {result['error']}")
+    
+    print(f"\n{'='*60}")
+    print(f"BASELINE VALIDATION SUMMARY")
+    print(f"{'='*60}")
+    print(f"Total problems: {len(problems)}")
+    print(f"Valid: {len(problems) - len(failed)}")
+    print(f"Failed: {len(failed)}")
+    
+    if failed:
+        print(f"\nFailed problems:")
+        for f in failed:
+            print(f"  - {f['path']}: {f['error'] or 'validation failed'}")
+        sys.exit(1)
+    else:
+        print(f"\nAll baselines valid! ✅")
+
+if __name__ == "__main__":
+    main()

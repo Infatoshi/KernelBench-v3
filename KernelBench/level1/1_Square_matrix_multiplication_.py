@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 
+
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
+
 class Model(nn.Module):
     """
     Simple model that performs a single square matrix multiplication (C = A * B)
@@ -22,6 +25,8 @@ class Model(nn.Module):
         return torch.matmul(A, B)
 
 N = 2048
+OP_TYPE = "gemm"
+SUPPORTED_PRECISIONS = ["fp16", "bf16", "fp32"]
 
 def get_inputs():
     A = torch.randn(N, N)

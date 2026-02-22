@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 # DeepSeek-V3 Multi-head Latent Attention (MLA)
 # Source: https://huggingface.co/deepseek-ai/DeepSeek-V3/blob/main/modeling_deepseek.py
@@ -13,7 +12,9 @@ import math
 #
 # This HuggingFace implementation uses naive PyTorch ops - a fused CUDA kernel can
 # significantly accelerate the compression/expansion and attention computation.
-
+OP_TYPE = "attention"
+SUPPORTED_PRECISIONS = ['fp8', 'fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
 
 class DeepSeekRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):

@@ -14,7 +14,9 @@ import math
 #
 # The baseline uses batched expert computation with stacked weights.
 # A fused CUDA kernel can further optimize memory access patterns.
-
+OP_TYPE = "model"
+SUPPORTED_PRECISIONS = ['fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
 
 class MoEGate(nn.Module):
     """

@@ -1,6 +1,11 @@
 import torch
 import torch.nn as nn
 
+
+OP_TYPE = "fused"
+SUPPORTED_PRECISIONS = ['fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
+
 class Model(nn.Module):
     """
     A model that performs a convolution, applies tanh, scaling, adds a bias term, and then max-pools.

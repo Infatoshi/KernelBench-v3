@@ -4,6 +4,9 @@ import torch.nn.functional as F
 import math
 
 # From https://github.com/karpathy/minGPT/blob/master/mingpt/model.py
+OP_TYPE = "model"
+SUPPORTED_PRECISIONS = ['fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
 
 class NewGELU(nn.Module):
     """

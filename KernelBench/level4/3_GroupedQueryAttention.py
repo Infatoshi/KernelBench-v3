@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 # Grouped Query Attention (GQA)
 # Used in: Llama 2 70B, Mistral, Llama 3, Gemma, Qwen 2.5, etc.
@@ -18,7 +17,9 @@ import math
 # 1. KV head broadcasting/expansion to query heads
 # 2. Fused attention with grouped structure
 # 3. Memory layout optimization for KV cache access patterns
-
+OP_TYPE = "attention"
+SUPPORTED_PRECISIONS = ['fp8', 'fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
 
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""

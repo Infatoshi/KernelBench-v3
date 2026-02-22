@@ -17,7 +17,18 @@ import modal
 GPU_IMAGE = (
     modal.Image.from_registry("nvidia/cuda:13.1.0-devel-ubuntu24.04", add_python="3.11")
     .apt_install("ninja-build", "build-essential", "git", "cmake", "wget")
-    .pip_install("torch", "transformers", "accelerate", "sentencepiece", "protobuf", "triton")
+    .run_commands("git clone --depth 1 https://github.com/NVIDIA/cutlass.git /opt/cutlass")
+    .env({"CUTLASS_PATH": "/opt/cutlass/include"})
+    .pip_install(
+        "torch",
+        "transformers",
+        "accelerate",
+        "sentencepiece",
+        "protobuf",
+        "triton",
+        "flash-linear-attention",
+        "cuda-tile",
+    )
 )
 
 # Get or create the Modal app
@@ -73,6 +84,20 @@ class ModalSandbox:
         # Create workspace and write reference code
         self._exec("mkdir -p /workspace")
         self._write_file_raw("/workspace/reference.py", self.problem_code)
+
+        # Verify CuTe headers are available in the image.
+        cute_check = self._exec("test -f /opt/cutlass/include/cute/tensor.hpp && echo 'CuTe OK' || echo 'CuTe MISSING'")
+        if "CuTe OK" not in cute_check["stdout"]:
+            raise RuntimeError("CuTe headers missing at /opt/cutlass/include/cute/tensor.hpp")
+
+        # Verify CuTile Python package availability (used by CuTileBench).
+        cutile_check = self._exec(
+            "python -c \"import importlib.metadata as md; import cuda.tile as ct; print(md.version('cuda-tile'))\""
+        )
+        if cutile_check["returncode"] == 0:
+            print(f"CuTile Python available: {cutile_check['stdout'].strip()}", flush=True)
+        else:
+            print(f"Warning: CuTile Python unavailable: {cutile_check['stderr'].strip()}", flush=True)
 
         # Get GPU info
         result = self._exec("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")

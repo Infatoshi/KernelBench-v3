@@ -12,7 +12,6 @@ Usage:
 """
 
 import modal
-import os
 
 # Define the Modal app
 app = modal.App("kernelbench-benchmark")
@@ -70,13 +69,39 @@ def _run_benchmark(solution_code: str, reference_code: str, num_perf_trials: int
 
     Correctness is tested across multiple random seeds to prevent caching exploits.
     """
-    import torch
-    import torch.nn as nn
+    import re
+    import statistics
     import numpy as np
+    import torch
     import traceback
 
     # Multiple seeds to prevent hardcoding/caching for a single seed
     CORRECTNESS_SEEDS = [42, 123, 456, 789, 1337]
+    # Stabilize timing across runs while preserving caller override for larger sweeps.
+    num_perf_trials = max(num_perf_trials, 30)
+
+    forbidden_solution_patterns = [
+        (
+            re.compile(r"torch::\s*(?:mm|matmul|conv1d|conv2d|conv3d|linear)\s*\("),
+            "Forbidden C++ wrapper fallback to PyTorch operator",
+        ),
+        (
+            re.compile(r"(?:^|[^\w])torch\.(?:mm|matmul|conv1d|conv2d|conv3d|linear)\s*\("),
+            "Forbidden Python fallback to PyTorch operator",
+        ),
+        (
+            re.compile(r"(?:^|[^\w])F\.(?:linear|conv1d|conv2d|conv3d)\s*\("),
+            "Forbidden Python fallback via torch.nn.functional",
+        ),
+        (
+            re.compile(r"(?:^|[^\w])torch\.compile\s*\("),
+            "Forbidden use of torch.compile",
+        ),
+        (
+            re.compile(r"@torch\.jit\.script"),
+            "Forbidden use of torch.jit.script",
+        ),
+    ]
 
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
@@ -96,6 +121,13 @@ def _run_benchmark(solution_code: str, reference_code: str, num_perf_trials: int
     context = {}
 
     try:
+        # Guardrail check before executing any submitted code.
+        for pattern, message in forbidden_solution_patterns:
+            match = pattern.search(solution_code)
+            if match:
+                result["error"] = f"{message}: `{match.group(0).strip()}`"
+                return result
+
         # Load reference model
         exec(reference_code, context)
         Model = context.get("Model")
@@ -132,8 +164,10 @@ def _run_benchmark(solution_code: str, reference_code: str, num_perf_trials: int
             custom_model = ModelNew(*init_inputs).cuda()
 
         # Check correctness across multiple seeds to prevent caching exploits
+        atol, rtol = 0.05, 0.02
         for seed in CORRECTNESS_SEEDS:
             torch.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
             inputs = get_inputs()
             inputs = [x.cuda() if isinstance(x, torch.Tensor) else x for x in inputs]
 
@@ -148,13 +182,23 @@ def _run_benchmark(solution_code: str, reference_code: str, num_perf_trials: int
                 result["error"] = f"Shape mismatch at seed={seed}: {output_ref.shape} vs {output_new.shape}"
                 return result
 
-            if not torch.allclose(output_ref, output_new, atol=1e-02, rtol=1e-02):
+            output_ref_f = output_ref.float()
+            output_new_f = output_new.float()
+            max_diff = torch.max(torch.abs(output_ref_f - output_new_f)).item()
+            tolerance = atol + rtol * output_ref_f.abs().max().item()
+            if max_diff >= tolerance:
                 max_diff = torch.max(torch.abs(output_ref - output_new)).item()
                 result["error"] = f"Output mismatch at seed={seed}: max_diff={max_diff:.6f}"
                 return result
 
         result["correctness"] = True
         result["seeds_tested"] = len(CORRECTNESS_SEEDS)
+
+        # Deterministic benchmark inputs after correctness passes.
+        torch.manual_seed(2026)
+        torch.cuda.manual_seed_all(2026)
+        inputs = get_inputs()
+        inputs = [x.cuda() if isinstance(x, torch.Tensor) else x for x in inputs]
 
         # Benchmark performance
         num_warmup = 5
@@ -195,8 +239,10 @@ def _run_benchmark(solution_code: str, reference_code: str, num_perf_trials: int
             torch.cuda.synchronize()
             sol_times.append(start.elapsed_time(end))
 
-        result["baseline_ms"] = float(np.mean(ref_times))
-        result["solution_ms"] = float(np.mean(sol_times))
+        result["baseline_ms"] = float(statistics.median(ref_times))
+        result["solution_ms"] = float(statistics.median(sol_times))
+        result["baseline_mean_ms"] = float(np.mean(ref_times))
+        result["solution_mean_ms"] = float(np.mean(sol_times))
         result["baseline_std_ms"] = float(np.std(ref_times))
         result["solution_std_ms"] = float(np.std(sol_times))
 

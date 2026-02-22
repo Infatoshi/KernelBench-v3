@@ -1,0 +1,11 @@
+{
+  "has_get_inputs": 59,
+  "has_get_init_inputs": 59,
+  "uses_torch_randn": 55,
+  "uses_torch_rand": 1,
+  "uses_torch_randint": 8,
+  "uses_manual_seed_inside_problem": 0,
+  "uses_explicit_dtype": 20,
+  "uses_explicit_cuda_device": 1,
+  "returns_non_tensor_likely": 0
+}

@@ -22,6 +22,7 @@ dependencies = [
     "groq",
     "hjson",
     "huggingface-hub",
+    "jupytext>=1.19.0",
     "loguru",
     "matplotlib",
     "modal",

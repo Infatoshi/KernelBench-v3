@@ -1,6 +1,11 @@
 import torch
 import torch.nn as nn
 
+
+OP_TYPE = "fused"
+SUPPORTED_PRECISIONS = ['fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
+
 class Model(nn.Module):
     """
     Model that performs a convolution, subtraction, tanh activation, subtraction and average pooling.

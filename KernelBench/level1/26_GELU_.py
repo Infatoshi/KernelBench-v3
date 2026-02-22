@@ -1,6 +1,11 @@
 import torch
 import torch.nn as nn
 
+
+OP_TYPE = "elementwise"
+SUPPORTED_PRECISIONS = ['fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
+
 class Model(nn.Module):
     """
     Simple model that performs a GELU activation.

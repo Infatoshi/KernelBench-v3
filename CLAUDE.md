@@ -8,16 +8,18 @@
 <status>
   <state>READY TO RUN EVALUATIONS</state>
   <next-action>
-    Run the 5 cheapest models first (~$12-22 total):
-    1. gemini-3-flash (~$1-2)
-    2. deepseek-v3.2 (~$2-4)
-    3. glm-4.7 (~$3-5)
-    4. minimax-m2.1 (~$3-5)
-    5. kimi-k2-thinking (~$3-6)
+    Run the 5 cheapest models first:
+    1. grok-4.1 ($0.20/$0.50 per M - very cheap!)
+    2. deepseek-v3.2 ($0.25/$0.38 per M)
+    3. minimax-m2.1 ($0.27/$1.12 per M)
+    4. glm-4.7 ($0.40/$1.50 per M)
+    5. gemini-3-flash ($0.50/$3.00 per M)
   </next-action>
   <completed>
     - 41 problems finalized (L1:15, L2:15, L3:3, L4:8)
-    - 10 models configured with pricing
+    - 11 models configured (added gpt-5.2-codex)
+    - Dynamic pricing from OpenRouter API (no more hardcoded values)
+    - Any valid OpenRouter model can be used dynamically
     - Modal sandbox with CUDA 13.1, git, cmake for CUTLASS/CuTe
     - Multi-seed correctness (5 seeds)
     - FP8 baseline fixed (torch._scaled_mm)
@@ -47,9 +49,10 @@
     <total-evals-per-model>41 problems x 2 GPUs = 82 runs</total-evals-per-model>
   </current-config>
 
-  <models count="10">
-    Frontier: Claude Opus 4.5, Claude Sonnet 4.5, GPT-5.2, Gemini 3 Flash, Gemini 3 Pro, Grok 4.1
+  <models count="11">
+    Frontier: Claude Opus 4.5, Claude Sonnet 4.5, GPT-5.2, GPT-5.2 Codex, Gemini 3 Flash, Gemini 3 Pro, Grok 4.1
     Open: GLM-4.7, DeepSeek V3.2, Kimi K2 Thinking, MiniMax M2.1
+    Dynamic: Any valid OpenRouter model ID (e.g., anthropic/claude-3.7-sonnet)
   </models>
 
   <key-commands>
@@ -58,18 +61,20 @@
     <cmd name="monitor">tail -f logs/MODEL.log | grep -E "Token Usage|Cost|\[OK\]|\[FAIL\]"</cmd>
   </key-commands>
 
-  <cost-estimates per-82-runs="estimated">
-    <model name="gemini-3-flash">$1-2</model>
-    <model name="deepseek-v3.2">$2-4</model>
-    <model name="glm-4.7">$3-5</model>
-    <model name="minimax-m2.1">$3-5</model>
-    <model name="kimi-k2-thinking">$3-6</model>
-    <model name="gemini-3-pro">$8-12</model>
-    <model name="grok-4.1">$15-25</model>
-    <model name="claude-sonnet-4.5">$25-40</model>
-    <model name="gpt-5.2">$30-50</model>
-    <model name="claude-opus-4.5">$80-120</model>
-  </cost-estimates>
+  <pricing note="Fetched dynamically from OpenRouter API - not hardcoded">
+    Pricing per million tokens (input/output):
+    - grok-4.1: $0.20/$0.50
+    - deepseek-v3.2: $0.25/$0.38
+    - minimax-m2.1: $0.27/$1.12
+    - glm-4.7: $0.40/$1.50
+    - kimi-k2-thinking: $0.40/$1.75
+    - gemini-3-flash: $0.50/$3.00
+    - gpt-5.2: $1.75/$14.00
+    - gpt-5.2-codex: $1.75/$14.00
+    - gemini-3-pro: $2.00/$12.00
+    - claude-sonnet-4.5: $3.00/$15.00
+    - claude-opus-4.5: $5.00/$25.00
+  </pricing>
 </quick-reference>
 
 <!-- ============================================================================
@@ -137,8 +142,8 @@
       4_FP8_Matmul.py         # FP8 E4M3 quantized matmul with tensor cores (torch._scaled_mm)
       5_MoE_GatedGEMM.py      # MoE with fused gated dual GEMM (SwiGLU FFN)
       6_INT4_Quantized_GEMM.py   # INT4 weight-only quant with group-wise dequant fusion
-      7_GatedDeltaNet.py      # Gated delta rule linear attention (Qwen3-Next, ICLR 2025)
-      8_KimiDeltaAttention.py # Channel-wise gated delta attention (Kimi Linear 48B)
+      7_GatedDeltaNet.py      # Gated delta rule (fla baseline) - beat Triton chunk-wise kernel
+      8_KimiDeltaAttention.py # Channel-wise KDA (fla baseline) - beat Triton chunk-wise kernel
     </problems>
     <rationale>
       L4 tests modern inference optimization patterns:
@@ -147,9 +152,10 @@
       - FP8: tensor core utilization at reduced precision via torch._scaled_mm
       - Gated GEMM: dual GEMM fusion for SwiGLU (CUTLASS pattern)
       - INT4 GEMM: weight-only quantization with fused unpack+dequant+matmul
-      - Gated DeltaNet: linear attention with delta rule (arxiv 2412.06464, ICLR 2025, Qwen3-Next)
-      - Kimi Delta Attention: channel-wise gating extension (arxiv 2510.26692, Kimi Linear 48B)
-      All have clear optimization targets and naive PyTorch baselines.
+      - Gated DeltaNet: linear attention with delta rule - uses fla chunk-wise Triton baseline
+      - Kimi Delta Attention: channel-wise gating - uses fla chunk-wise Triton baseline
+      Note: GatedDeltaNet and KDA use flash-linear-attention (fla) as baseline, so models
+      must beat already-optimized Triton kernels, not naive sequential Python loops.
     </rationale>
   </level>
 
@@ -172,20 +178,25 @@
      MODELS
      ============================================================================ -->
 
-<models-to-evaluate count="10">
+<models-to-evaluate count="11" note="Pricing fetched dynamically from OpenRouter API">
   <tier name="Frontier">
-    <model key="claude-opus-4.5" id="claude-opus-4-5-20251101" provider="anthropic" pricing="$15/$75 per M"/>
-    <model key="claude-sonnet-4.5" id="claude-sonnet-4-5-20250929" provider="anthropic" pricing="$3/$15 per M"/>
-    <model key="gpt-5.2" id="gpt-5.2" provider="openai" pricing="$10/$30 per M"/>
-    <model key="gemini-3-flash" id="gemini-3-flash-preview" provider="gemini" pricing="$0.10/$0.40 per M"/>
-    <model key="gemini-3-pro" id="gemini-3-pro-preview" provider="gemini" pricing="$1.25/$5 per M"/>
-    <model key="grok-4.1" id="grok-4-1-fast-reasoning" provider="xai" pricing="$3/$15 per M"/>
+    <model key="claude-opus-4.5" id="claude-opus-4-5-20251101" provider="anthropic"/>
+    <model key="claude-sonnet-4.5" id="claude-sonnet-4-5-20250929" provider="anthropic"/>
+    <model key="gpt-5.2" id="gpt-5.2" provider="openai"/>
+    <model key="gpt-5.2-codex" id="gpt-5.2-codex" provider="openai"/>
+    <model key="gemini-3-flash" id="gemini-3-flash-preview" provider="gemini"/>
+    <model key="gemini-3-pro" id="gemini-3-pro-preview" provider="gemini"/>
+    <model key="grok-4.1" id="grok-4-1-fast-reasoning" provider="xai"/>
   </tier>
   <tier name="Open/Chinese">
-    <model key="glm-4.7" id="z-ai/glm-4.7" provider="openrouter" pricing="$0.50/$2 per M"/>
-    <model key="deepseek-v3.2" id="deepseek/deepseek-chat" provider="openrouter" pricing="$0.30/$1.20 per M"/>
-    <model key="kimi-k2-thinking" id="moonshotai/kimi-k2-thinking" provider="openrouter" pricing="$0.40/$1.75 per M"/>
-    <model key="minimax-m2.1" id="minimax/minimax-m2.1" provider="openrouter" pricing="$0.50/$2 per M"/>
+    <model key="glm-4.7" id="z-ai/glm-4.7" provider="openrouter"/>
+    <model key="deepseek-v3.2" id="deepseek/deepseek-v3.2" provider="openrouter"/>
+    <model key="kimi-k2-thinking" id="moonshotai/kimi-k2-thinking" provider="openrouter"/>
+    <model key="minimax-m2.1" id="minimax/minimax-m2.1" provider="openrouter"/>
+  </tier>
+  <tier name="Dynamic">
+    Any valid OpenRouter model ID can be used (e.g., anthropic/claude-3.7-sonnet, openai/o4-mini)
+    Pricing is fetched automatically from OpenRouter API
   </tier>
 </models-to-evaluate>
 

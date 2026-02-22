@@ -18,7 +18,9 @@ import torch.nn as nn
 #
 # PyTorch 2.1+ supports torch.float8_e4m3fn and torch.float8_e5m2
 # torch._scaled_mm provides native FP8 tensor core GEMM
-
+OP_TYPE = "gemm"
+SUPPORTED_PRECISIONS = ['fp4', 'fp8', 'fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['H100', 'B200']
 
 class Model(nn.Module):
     """

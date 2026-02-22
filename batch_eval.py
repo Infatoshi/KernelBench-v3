@@ -17,7 +17,7 @@ Usage:
 """
 
 import argparse
-import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -31,13 +31,23 @@ from typing import List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from modal_eval import (
-    MODELS, ModelConfig, EvalResult, run_agent_on_modal,
-    GPU_SPECS, find_problems
+from modal_eval import (  # noqa: E402
+    MODELS, EvalResult, run_agent_on_modal,
+    find_problems, get_model_config
+)
+from src.config.benchmark_problems import get_problem_hardware_required  # noqa: E402
+from src.config.runtime_validation import (  # noqa: E402
+    ERROR_MESSAGES as RUNTIME_ERROR_MESSAGES,
+    validate_gpus as validate_allowed_gpus,
+    validate_platform,
 )
 
-# GPU types available on Modal
-GPUS = ["L40S", "A100", "H100", "B200"]
+# CUDABench GPU matrix
+ALLOWED_GPUS = ["RTX3090", "H100", "B200"]
+GPUS = ALLOWED_GPUS.copy()
+BENCHMARK_NAME = "CUDABench"
+GPU_REASON = "CUDABench targets NVIDIA CUDA paths validated for RTX3090, H100, and B200."
+ERROR_MESSAGES = dict(RUNTIME_ERROR_MESSAGES)
 
 # Concurrency limits
 MAX_CONCURRENT_MODAL = 8  # Modal sandbox limit
@@ -52,6 +62,11 @@ TURN_LIMITS = {
 }
 
 
+def validate_gpus(requested: List[str]) -> None:
+    """Validate requested GPU list for CUDABench."""
+    validate_allowed_gpus(requested, GPUS, BENCHMARK_NAME, GPU_REASON)
+
+
 def get_all_tasks(
     models: List[str],
     gpus: List[str],
@@ -61,20 +76,27 @@ def get_all_tasks(
     """Generate all (model, gpu, level, problem_path) combinations."""
     problems = find_problems(levels)
 
-    # Limit problems per level if specified
-    if problems_per_level is not None:
-        limited = []
-        level_counts = {}
-        for level, problem_path in problems:
-            level_counts[level] = level_counts.get(level, 0) + 1
-            if level_counts[level] <= problems_per_level:
-                limited.append((level, problem_path))
-        problems = limited
-
     tasks = []
     for model_key in models:
         for gpu in gpus:
+            gpu_compatible = []
             for level, problem_path in problems:
+                required_hardware = get_problem_hardware_required(problem_path)
+                if required_hardware and gpu not in required_hardware:
+                    continue
+                gpu_compatible.append((level, problem_path))
+
+            # Limit problems per level after GPU compatibility filtering.
+            if problems_per_level is not None:
+                filtered = []
+                level_counts = {}
+                for level, problem_path in gpu_compatible:
+                    level_counts[level] = level_counts.get(level, 0) + 1
+                    if level_counts[level] <= problems_per_level:
+                        filtered.append((level, problem_path))
+                gpu_compatible = filtered
+
+            for level, problem_path in gpu_compatible:
                 tasks.append((model_key, gpu, level, problem_path))
 
     return tasks
@@ -92,7 +114,7 @@ def load_completed(run_dir: Path) -> set:
                     result = json.loads(line)
                     task_id = f"{result['model']}_{result['gpu']}_{result['problem']}"
                     completed.add(task_id)
-                except:
+                except Exception:
                     pass
 
     return completed
@@ -147,10 +169,13 @@ def run_single_eval(
     gpu: str,
     level: int,
     problem_path: Path,
-    max_turns: Optional[int] = None
+    max_turns: Optional[int] = None,
+    turn_artifact_dir: Optional[Path] = None,
 ) -> EvalResult:
     """Run single evaluation (worker function)."""
-    model_config = MODELS[model_key]
+    model_config = get_model_config(model_key)
+    if model_config is None:
+        raise ValueError(f"Unknown model: {model_key}")
 
     # Use level-specific turn limit if not overridden
     if max_turns is None:
@@ -161,8 +186,21 @@ def run_single_eval(
 
     print(f"[START] {model_config.name} | {gpu} | {problem_path.name}", flush=True)
 
+    prev_turn_dir = os.environ.get("KB_TURN_ARTIFACT_DIR")
     try:
-        result = run_agent_on_modal(
+        if turn_artifact_dir is not None:
+            turn_artifact_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["KB_TURN_ARTIFACT_DIR"] = str(turn_artifact_dir)
+        elif "KB_TURN_ARTIFACT_DIR" in os.environ:
+            del os.environ["KB_TURN_ARTIFACT_DIR"]
+
+        eval_runner = run_agent_on_modal
+        if gpu == "M4MAX":
+            from metal_eval import run_agent_on_modal as run_agent_on_metal
+
+            eval_runner = run_agent_on_metal
+
+        result = eval_runner(
             model_config=model_config,
             gpu=gpu,
             problem_code=problem_code,
@@ -180,6 +218,20 @@ def run_single_eval(
             level=level,
             error=str(e)
         )
+    finally:
+        if prev_turn_dir is None:
+            os.environ.pop("KB_TURN_ARTIFACT_DIR", None)
+        else:
+            os.environ["KB_TURN_ARTIFACT_DIR"] = prev_turn_dir
+
+    if turn_artifact_dir is not None and result.solution_code:
+        turn_artifact_dir.mkdir(parents=True, exist_ok=True)
+        final_solution = turn_artifact_dir / "final_solution.py"
+        with open(final_solution, "w", encoding="utf-8") as f:
+            f.write(result.solution_code)
+        result.solution_path = str(Path("turns") / turn_artifact_dir.name / "final_solution.py")
+        if not result.solution_hash:
+            result.solution_hash = hashlib.sha256(result.solution_code.encode("utf-8")).hexdigest()[:16]
 
     status = "OK" if result.correct else ("FAIL" if result.compiled else "ERR")
     speedup = f"{result.speedup:.2f}x" if result.speedup else "N/A"
@@ -199,7 +251,8 @@ def run_batch_sequential(
     results_file = run_dir / "results.jsonl"
 
     for i, (model_key, gpu, level, problem_path) in enumerate(tasks):
-        task_id = f"{MODELS[model_key].name}_{gpu}_{problem_path.name}"
+        model_config = get_model_config(model_key)
+        task_id = f"{model_config.name}_{gpu}_{problem_path.name}"
 
         if task_id in completed:
             print(f"[SKIP] {task_id} (already completed)")
@@ -209,7 +262,15 @@ def run_batch_sequential(
         effective_turns = max_turns if max_turns is not None else TURN_LIMITS.get(level, 15)
         print(f"\n[{i+1}/{len(tasks)}] {task_id} (max {effective_turns} turns)")
 
-        result = run_single_eval(model_key, gpu, level, problem_path, max_turns)
+        turn_artifact_dir = run_dir / "turns" / task_id.replace("/", "-").replace(" ", "_")
+        result = run_single_eval(
+            model_key,
+            gpu,
+            level,
+            problem_path,
+            max_turns,
+            turn_artifact_dir=turn_artifact_dir,
+        )
 
         # Save kernel if submitted
         save_kernel(run_dir, result, problem_path)
@@ -235,7 +296,8 @@ def run_batch_parallel(
     pending = []
     for task in tasks:
         model_key, gpu, level, problem_path = task
-        task_id = f"{MODELS[model_key].name}_{gpu}_{problem_path.name}"
+        model_config = get_model_config(model_key)
+        task_id = f"{model_config.name}_{gpu}_{problem_path.name}"
         if task_id not in completed:
             pending.append(task)
 
@@ -258,8 +320,11 @@ def run_batch_parallel(
         futures = {}
         for task in pending:
             model_key, gpu, level, problem_path = task
+            model_config = get_model_config(model_key)
+            task_id = f"{model_config.name}_{gpu}_{problem_path.name}" if model_config else f"{model_key}_{gpu}_{problem_path.name}"
+            turn_artifact_dir = run_dir / "turns" / task_id.replace("/", "-").replace(" ", "_")
             future = executor.submit(
-                run_single_eval, model_key, gpu, level, problem_path, max_turns
+                run_single_eval, model_key, gpu, level, problem_path, max_turns, turn_artifact_dir
             )
             futures[future] = task
 
@@ -271,8 +336,9 @@ def run_batch_parallel(
             try:
                 result = future.result()
             except Exception as e:
+                model_config = get_model_config(model_key)
                 result = EvalResult(
-                    model=MODELS[model_key].name,
+                    model=model_config.name if model_config else model_key,
                     gpu=gpu,
                     problem=problem_path.name,
                     level=level,
@@ -472,9 +538,12 @@ def main():
 
     # List models
     if args.list_models:
-        print("Available models:")
+        print("Predefined models:")
         for key, cfg in MODELS.items():
             print(f"  {key}: {cfg.name} ({cfg.provider})")
+        print("\nOpenRouter models:")
+        print("  Any valid OpenRouter model ID can be used (e.g., 'anthropic/claude-3-opus')")
+        print("  Pricing is fetched dynamically from OpenRouter API")
         return
 
     # List problems
@@ -495,32 +564,51 @@ def main():
         print_summary(summary)
         return
 
-    # Parse selections
-    if args.all:
-        models = list(MODELS.keys())
-        gpus = GPUS
+    # Resume mode: load config from existing run
+    if args.resume:
+        run_dir = Path(args.resume)
+        if not run_dir.exists():
+            print(f"Resume directory not found: {run_dir}")
+            return
+        config_file = run_dir / "config.json"
+        if not config_file.exists():
+            print(f"Config not found in resume directory: {config_file}")
+            return
+        with open(config_file) as f:
+            saved_config = json.load(f)
+        models = saved_config["models"]
+        gpus = saved_config["gpus"]
+        levels = saved_config["levels"]
+        if args.workers is None:
+            args.workers = saved_config.get("workers", 4)
+        print(f"Resuming from: {run_dir}")
+        print(f"Original config: models={models}, gpus={gpus}, levels={levels}")
     else:
-        if not args.models:
-            parser.print_help()
-            print("\nError: --models required (or use --all)")
-            return
-        models = args.models.split(",") if args.models != "all" else list(MODELS.keys())
-        gpus = args.gpus.split(",") if args.gpus != "all" else GPUS
+        # Parse selections
+        if args.all:
+            models = list(MODELS.keys())
+            gpus = GPUS
+        else:
+            if not args.models:
+                parser.print_help()
+                print("\nError: --models required (or use --all)")
+                return
+            models = args.models.split(",") if args.models != "all" else list(MODELS.keys())
+            gpus = args.gpus.split(",") if args.gpus != "all" else GPUS
 
-    levels = [int(l) for l in args.levels.split(",")]
+        levels = [int(level_str) for level_str in args.levels.split(",")]
 
-    # Validate
+    # Validate models (supports predefined and dynamic OpenRouter models)
     for m in models:
-        if m not in MODELS:
+        model_config = get_model_config(m)
+        if model_config is None:
             print(f"Unknown model: {m}")
-            print(f"Available: {list(MODELS.keys())}")
+            print(f"Predefined models: {list(MODELS.keys())}")
+            print("Or use any valid OpenRouter model ID (e.g., 'anthropic/claude-3-opus')")
             return
 
-    for g in gpus:
-        if g not in GPUS:
-            print(f"Unknown GPU: {g}")
-            print(f"Available: {GPUS}")
-            return
+    validate_gpus(gpus)
+    validate_platform(gpus, BENCHMARK_NAME)
 
     # Generate tasks
     tasks = get_all_tasks(models, gpus, levels, args.problems_per_level)
@@ -532,18 +620,14 @@ def main():
         print(f"Total tasks: {len(tasks)}")
         print("\nFirst 10 tasks:")
         for model_key, gpu, level, problem_path in tasks[:10]:
-            print(f"  {MODELS[model_key].name} | {gpu} | L{level} | {problem_path.name}")
+            model_config = get_model_config(model_key)
+            print(f"  {model_config.name} | {gpu} | L{level} | {problem_path.name}")
         if len(tasks) > 10:
             print(f"  ... and {len(tasks) - 10} more")
         return
 
-    # Setup output directory
-    if args.resume:
-        run_dir = Path(args.resume)
-        if not run_dir.exists():
-            print(f"Resume directory not found: {run_dir}")
-            return
-    else:
+    # Setup output directory (run_dir already set if resuming)
+    if not args.resume:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = Path(args.output_dir) / f"run_{timestamp}"
         run_dir.mkdir(parents=True, exist_ok=True)

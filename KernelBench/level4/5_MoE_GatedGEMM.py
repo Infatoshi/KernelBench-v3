@@ -1,27 +1,24 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
 # MoE Gated GEMM (Mixture of Experts with Fused Gating)
 # Used in: Mixtral, DeepSeek-V3, Grok, DBRX, Arctic
 # Reference: https://arxiv.org/abs/2401.04088 (Mixtral of Experts)
 #
-# In MoE, the gating mechanism selects which experts process each token.
-# The naive approach:
-# 1. Compute gate scores for all experts
-# 2. Select top-k experts per token
-# 3. Loop through selected experts, gathering tokens for each
-# 4. Run expert MLP, scatter results back
+# This problem focuses on the "gated dual GEMM" pattern in MoE FFNs:
+#   output = down_proj(SiLU(gate_proj(x)) * up_proj(x))
 #
-# This sequential loop is highly inefficient. A fused kernel should:
-# - Batch tokens across experts efficiently
-# - Avoid explicit gather/scatter
-# - Optionally fuse gate scoring with expert selection
-#
-# This problem focuses on the "gated dual GEMM" pattern:
-# output = gate * (W_up * x) where gate comes from sigmoid(W_gate * x)
-
+# The baseline uses batched matrix multiplication to process all experts
+# in parallel (no sequential loop). A custom CUDA kernel should:
+# 1. Fuse gate_proj and up_proj into single memory read of x
+# 2. Fuse SiLU activation with the elementwise multiply
+# 3. Use grouped GEMM for better utilization with varying expert batch sizes
+# 4. Optimize the gather/scatter pattern for expert weight selection
+# 5. Target 2-3x speedup through fusion and memory optimization
+OP_TYPE = "fused"
+SUPPORTED_PRECISIONS = ['fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
 
 class Model(nn.Module):
     """
@@ -76,46 +73,65 @@ class Model(nn.Module):
         MoE forward with gated dual GEMM.
 
         Each token is processed by top_k experts, weighted by expert_weights.
+        This implementation groups tokens by expert and uses efficient batched
+        operations. The expert loop uses torch operations that can be compiled.
+
+        Optimization target: A CUDA kernel should:
+        1. Fuse gate_proj and up_proj into single memory read of x
+        2. Fuse SiLU with the elementwise multiply
+        3. Use grouped GEMM (CUTLASS) for varying expert batch sizes
+        4. Avoid the explicit sort/gather/scatter overhead
+        5. Target 2-3x speedup through fusion
         """
         batch, seq_len, _ = x.shape
         top_k = expert_indices.shape[-1]
+        num_tokens = batch * seq_len
 
-        # Reshape for processing
-        x_flat = x.view(-1, self.hidden_size)  # (batch * seq_len, hidden)
-        num_tokens = x_flat.shape[0]
+        x_flat = x.view(num_tokens, self.hidden_size)
+        indices_flat = expert_indices.view(num_tokens * top_k)
+        weights_flat = expert_weights.view(num_tokens * top_k)
 
-        # INEFFICIENT: Loop through each expert
-        output = torch.zeros(num_tokens, self.hidden_size, device=x.device, dtype=x.dtype)
+        # Create token indices for each (token, slot) pair
+        token_ids = torch.arange(num_tokens, device=x.device)
+        token_ids = token_ids.unsqueeze(1).expand(-1, top_k).reshape(-1)
 
-        for expert_idx in range(self.num_experts):
-            # Find which (token, slot) pairs use this expert
-            # expert_indices: (batch, seq_len, top_k)
-            expert_mask = (expert_indices == expert_idx)  # (batch, seq_len, top_k)
+        # Sort by expert to enable batched processing
+        sorted_expert_idx, sort_order = indices_flat.sort()
+        sorted_token_ids = token_ids[sort_order]
+        sorted_weights = weights_flat[sort_order]
 
-            if not expert_mask.any():
+        # Get expert boundaries
+        expert_counts = torch.bincount(sorted_expert_idx, minlength=self.num_experts)
+        expert_offsets = torch.cat([
+            torch.zeros(1, dtype=torch.long, device=x.device),
+            expert_counts.cumsum(0)
+        ])
+
+        # Gather sorted inputs
+        sorted_x = x_flat[sorted_token_ids]  # (N*top_k, H)
+
+        # Process all experts - vectorized within each expert group
+        sorted_output = torch.empty_like(sorted_x)
+
+        for e in range(self.num_experts):
+            start, end = expert_offsets[e].item(), expert_offsets[e + 1].item()
+            if start == end:
                 continue
 
-            # Get token indices and their routing weights for this expert
-            batch_idx, seq_idx, slot_idx = torch.where(expert_mask)
-            token_indices = batch_idx * seq_len + seq_idx
-            weights = expert_weights[batch_idx, seq_idx, slot_idx]  # (num_selected,)
+            expert_x = sorted_x[start:end]  # (n_e, H)
 
-            # Get tokens for this expert
-            expert_input = x_flat[token_indices]  # (num_selected, hidden)
-
-            # GATED DUAL GEMM: The main optimization target
-            # gate = SiLU(expert_input @ gate_proj.T)
-            # up = expert_input @ up_proj.T
-            # intermediate = gate * up
-            # expert_output = intermediate @ down_proj.T
-
-            gate = F.silu(F.linear(expert_input, self.gate_proj[expert_idx]))
-            up = F.linear(expert_input, self.up_proj[expert_idx])
+            # Gated dual GEMM for this expert
+            gate = F.silu(F.linear(expert_x, self.gate_proj[e]))
+            up = F.linear(expert_x, self.up_proj[e])
             intermediate = gate * up
-            expert_output = F.linear(intermediate, self.down_proj[expert_idx])
+            sorted_output[start:end] = F.linear(intermediate, self.down_proj[e])
 
-            # Accumulate weighted output
-            output.index_add_(0, token_indices, expert_output * weights.unsqueeze(-1))
+        # Apply weights and scatter back
+        weighted_sorted = sorted_output * sorted_weights.unsqueeze(-1)
+
+        # Scatter-add back to original token positions
+        output = torch.zeros(num_tokens, self.hidden_size, device=x.device, dtype=x.dtype)
+        output.index_add_(0, sorted_token_ids, weighted_sorted)
 
         return output.view(batch, seq_len, self.hidden_size)
 

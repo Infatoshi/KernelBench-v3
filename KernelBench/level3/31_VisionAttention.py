@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+OP_TYPE = "attention"
+SUPPORTED_PRECISIONS = ['fp8', 'fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
 
 class Model(nn.Module):
     def __init__(self, embed_dim, num_heads):

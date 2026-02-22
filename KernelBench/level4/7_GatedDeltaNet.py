@@ -1,63 +1,59 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
+from fla.ops import chunk_gated_delta_rule
 
 # Gated DeltaNet: Linear Attention with Gated Delta Rule
 # Reference: https://arxiv.org/abs/2412.06464 (ICLR 2025)
-# Implementation: https://github.com/NVlabs/GatedDeltaNet, https://github.com/fla-org/flash-linear-attention
-#
-# Gated DeltaNet combines two mechanisms for efficient sequence modeling:
-# 1. Gating (alpha_t): Adaptive memory decay, controls state retention
-# 2. Delta rule (beta_t): Targeted memory updates via error correction
 #
 # Core recurrence:
 #   S_t = alpha_t * S_{t-1} - beta_t * (S_{t-1} @ k_t - v_t) @ k_t^T
+#   o_t = S_t @ q_t
 #
-# This can be rewritten as:
-#   S_t = alpha_t * S_{t-1} - beta_t * S_{t-1} @ k_t @ k_t^T + beta_t * v_t @ k_t^T
+# This baseline uses flash-linear-attention's chunk-wise parallel algorithm.
+# The chunked approach uses the WY representation to parallelize across
+# sequence length, achieving near-optimal hardware utilization.
 #
-# Output: o_t = S_t @ q_t
-#
-# Key optimization targets:
-# 1. Chunkwise parallelization using Householder transform
-# 2. Fused gate computation (alpha, beta from input)
-# 3. Efficient state matrix updates avoiding O(T^2) memory
-# 4. Tensor core utilization for the matrix-vector products
+# A custom CUDA kernel would need to match or beat fla's Triton implementation:
+# 1. Chunk-wise parallel processing with WY representation
+# 2. Fused operations within each chunk
+# 3. Efficient inter-chunk state propagation
+# 4. Memory-efficient gradient computation (if training)
+# 5. Target: match fla performance or achieve 1.2-1.5x through custom fusion
+OP_TYPE = "model"
+SUPPORTED_PRECISIONS = ['fp16', 'bf16', 'fp32']
+HARDWARE_REQUIRED = ['RTX3090', 'H100', 'B200']
+
+def gated_delta_attention(
+    q: torch.Tensor,      # (batch, heads, seq, d_qk)
+    k: torch.Tensor,      # (batch, heads, seq, d_qk)
+    v: torch.Tensor,      # (batch, heads, seq, d_v)
+    alpha: torch.Tensor,  # (batch, heads, seq) - decay gate (0-1)
+    beta: torch.Tensor,   # (batch, heads, seq) - update gate (0-1)
+    scale: float,
+) -> torch.Tensor:
+    """
+    Gated delta rule attention using flash-linear-attention's optimized kernel.
+
+    The fla library implements chunk-wise parallelization with the WY
+    representation, enabling efficient GPU utilization. This is the
+    state-of-the-art implementation for this recurrence.
+    """
+    # fla expects gate in log-space for numerical stability
+    g = alpha.clamp(min=1e-6).log()
+
+    # chunk_gated_delta_rule returns (output, final_state)
+    output, _ = chunk_gated_delta_rule(q, k, v, g, beta, scale=scale)
+    return output
 
 
 class Model(nn.Module):
     """
     Gated DeltaNet: Linear Attention with Gated Delta Rule
 
-    Mathematical formulation:
-    Given input x_t at timestep t:
-    - q_t, k_t = query/key projections (d_k dimensional)
-    - v_t = value projection (d_v dimensional)
-    - alpha_t = sigmoid(a_proj(x_t)) in (0, 1) - decay gate
-    - beta_t = sigmoid(b_proj(x_t)) in (0, 1) - delta learning rate
-
-    State update (the delta rule with gating):
-        S_t = alpha_t * S_{t-1} - beta_t * (S_{t-1} @ k_t - v_t) @ k_t^T
-
-    Output:
-        o_t = S_t @ q_t
-
-    Key optimization targets:
-    1. The naive O(T * d_k * d_v) recurrence is sequential
-    2. Chunkwise parallel algorithm uses Householder transforms
-    3. State matrix S is (d_v, d_k) per head - can be large
-    4. Fuse alpha/beta computation with state updates
-
-    The naive implementation:
-    - Loops over time steps sequentially
-    - Materializes full state matrix at each step
-    - No parallelization across sequence length
-
-    An optimized kernel should:
-    - Use chunkwise parallelization (process chunks of C tokens in parallel)
-    - Exploit Householder structure for efficient cumulative products
-    - Minimize state matrix memory traffic
+    This baseline uses flash-linear-attention's optimized Triton kernels
+    which implement chunk-wise parallelization with the WY representation.
+    A custom CUDA kernel should match or beat fla's throughput.
     """
 
     def __init__(
@@ -76,21 +72,15 @@ class Model(nn.Module):
         self.head_dim_v = head_dim_v
         self.use_short_conv = use_short_conv
 
-        # Q, K, V projections
         self.q_proj = nn.Linear(hidden_size, num_heads * head_dim_qk, bias=False)
         self.k_proj = nn.Linear(hidden_size, num_heads * head_dim_qk, bias=False)
         self.v_proj = nn.Linear(hidden_size, num_heads * head_dim_v, bias=False)
 
-        # Gating projections
-        # alpha: decay gate, controls how much of previous state to retain
-        # beta: delta learning rate, controls update magnitude
         self.a_proj = nn.Linear(hidden_size, num_heads, bias=True)
         self.b_proj = nn.Linear(hidden_size, num_heads, bias=True)
 
-        # Output projection
         self.o_proj = nn.Linear(num_heads * head_dim_v, hidden_size, bias=False)
 
-        # Optional short convolution for local context
         if use_short_conv:
             self.q_conv = nn.Conv1d(
                 num_heads * head_dim_qk, num_heads * head_dim_qk,
@@ -108,35 +98,18 @@ class Model(nn.Module):
                 padding=conv_kernel_size - 1
             )
 
-        # Output gate with RMSNorm + SiLU
         self.g_proj = nn.Linear(hidden_size, num_heads * head_dim_v, bias=False)
         self.o_norm = nn.LayerNorm(head_dim_v)
-
-        # Scaling factor for keys (prevents state explosion)
         self.scale = head_dim_qk ** -0.5
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of Gated DeltaNet.
-
-        Args:
-            x: Input tensor of shape (batch, seq_len, hidden_size)
-
-        Returns:
-            Output tensor of shape (batch, seq_len, hidden_size)
-        """
         batch_size, seq_len, _ = x.shape
-        device = x.device
-        dtype = x.dtype
 
-        # Project to Q, K, V
-        q = self.q_proj(x)  # (batch, seq, num_heads * head_dim_qk)
-        k = self.k_proj(x)  # (batch, seq, num_heads * head_dim_qk)
-        v = self.v_proj(x)  # (batch, seq, num_heads * head_dim_v)
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
 
-        # Optional short convolution
         if self.use_short_conv:
-            # (batch, seq, dim) -> (batch, dim, seq) for conv1d
             q = self.q_conv(q.transpose(1, 2))[:, :, :seq_len].transpose(1, 2)
             k = self.k_conv(k.transpose(1, 2))[:, :, :seq_len].transpose(1, 2)
             v = self.v_conv(v.transpose(1, 2))[:, :, :seq_len].transpose(1, 2)
@@ -144,88 +117,38 @@ class Model(nn.Module):
             k = F.silu(k)
             v = F.silu(v)
 
-        # Reshape for multi-head attention
-        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim_qk)
-        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim_qk)
-        v = v.view(batch_size, seq_len, self.num_heads, self.head_dim_v)
+        # Reshape to (B, H, T, D) for recurrence
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim_qk).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim_qk).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.num_heads, self.head_dim_v).transpose(1, 2)
 
-        # Compute gating values
-        alpha = torch.sigmoid(self.a_proj(x))  # (batch, seq, num_heads)
-        beta = torch.sigmoid(self.b_proj(x))   # (batch, seq, num_heads)
+        alpha = torch.sigmoid(self.a_proj(x)).transpose(1, 2)  # (B, H, T)
+        beta = torch.sigmoid(self.b_proj(x)).transpose(1, 2)
 
-        # Scale keys to prevent state explosion
-        k = k * self.scale
+        # Chunk-wise parallel attention (fla)
+        o = gated_delta_attention(q, k, v, alpha, beta, scale=self.scale)
 
-        # INEFFICIENT: Sequential recurrence over time
-        # Initialize state matrix: (batch, num_heads, head_dim_v, head_dim_qk)
-        S = torch.zeros(
-            batch_size, self.num_heads, self.head_dim_v, self.head_dim_qk,
-            device=device, dtype=dtype
-        )
+        # (B, H, T, d_v) -> (B, T, H, d_v)
+        o = o.transpose(1, 2)
 
-        outputs = []
-
-        for t in range(seq_len):
-            # Get current timestep values
-            q_t = q[:, t, :, :]   # (batch, num_heads, head_dim_qk)
-            k_t = k[:, t, :, :]   # (batch, num_heads, head_dim_qk)
-            v_t = v[:, t, :, :]   # (batch, num_heads, head_dim_v)
-            alpha_t = alpha[:, t, :].unsqueeze(-1).unsqueeze(-1)  # (batch, num_heads, 1, 1)
-            beta_t = beta[:, t, :].unsqueeze(-1).unsqueeze(-1)    # (batch, num_heads, 1, 1)
-
-            # Delta rule update:
-            # S_t = alpha_t * S_{t-1} - beta_t * (S_{t-1} @ k_t - v_t) @ k_t^T
-            #     = alpha_t * S_{t-1} - beta_t * S_{t-1} @ k_t @ k_t^T + beta_t * v_t @ k_t^T
-
-            # Compute S @ k: (batch, num_heads, head_dim_v, head_dim_qk) @ (batch, num_heads, head_dim_qk, 1)
-            #             -> (batch, num_heads, head_dim_v, 1)
-            k_t_col = k_t.unsqueeze(-1)  # (batch, num_heads, head_dim_qk, 1)
-            S_k = torch.matmul(S, k_t_col).squeeze(-1)  # (batch, num_heads, head_dim_v)
-
-            # Compute error: S @ k - v
-            error = S_k - v_t  # (batch, num_heads, head_dim_v)
-
-            # Outer product: error @ k^T -> (batch, num_heads, head_dim_v, head_dim_qk)
-            error_outer_k = torch.einsum('bhi,bhj->bhij', error, k_t)
-
-            # Value outer product: v @ k^T
-            v_outer_k = torch.einsum('bhi,bhj->bhij', v_t, k_t)
-
-            # State update: S = alpha * S - beta * error @ k^T
-            # Equivalently: S = alpha * S - beta * (S @ k - v) @ k^T
-            S = alpha_t * S - beta_t * error_outer_k
-
-            # Output: o = S @ q
-            q_t_col = q_t.unsqueeze(-1)  # (batch, num_heads, head_dim_qk, 1)
-            o_t = torch.matmul(S, q_t_col).squeeze(-1)  # (batch, num_heads, head_dim_v)
-
-            outputs.append(o_t)
-
-        # Stack outputs: (seq, batch, num_heads, head_dim_v) -> (batch, seq, num_heads, head_dim_v)
-        o = torch.stack(outputs, dim=1)  # (batch, seq, num_heads, head_dim_v)
-
-        # Apply output normalization per head
         o = self.o_norm(o)
 
-        # Apply output gate
-        g = torch.sigmoid(self.g_proj(x))  # (batch, seq, num_heads * head_dim_v)
+        g = torch.sigmoid(self.g_proj(x))
         g = g.view(batch_size, seq_len, self.num_heads, self.head_dim_v)
         o = o * g
 
-        # Reshape and project output
         o = o.reshape(batch_size, seq_len, self.num_heads * self.head_dim_v)
         o = self.o_proj(o)
 
         return o
 
 
-# Configuration matching typical LLM settings
 batch_size = 4
 seq_len = 2048
 hidden_size = 2048
 num_heads = 16
-head_dim_qk = 128  # Key/query dimension per head
-head_dim_v = 128   # Value dimension per head
+head_dim_qk = 128
+head_dim_v = 128
 
 
 def get_inputs():

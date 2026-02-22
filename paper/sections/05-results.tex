@@ -1,0 +1,37 @@
+We report results over \TotalEvals{} evaluations covering \TotalModels{} models, two GPUs, and \TotalProblems{} problems. Overall, \OverallPassRate\% of runs pass correctness and \OverallBeatRate\% beat the baseline. The average speedup among correct kernels is \AvgSpeedup{}x over \SpeedupCount{} successful runs.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figures/results_overall.png}
+\caption{Overall results by model. Bars show the fraction of runs that compiled, were correct, and beat the baseline.}
+\label{fig:overall}
+\end{figure}
+
+\noindent Figure~\ref{fig:overall} is sourced from the public dashboard export. GPT-5.2 Codex appears at 0\% there because the evaluation failed due to an API format mismatch in the OpenAI Codex endpoint, not model performance. We exclude GPT-5.2 Codex from the tables and aggregate statistics.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.98\linewidth]{figures/results_heatmap.png}
+\caption{Heatmap of correctness and baseline-beating rates by level.}
+\label{fig:heatmap}
+\end{figure}
+
+Table~\ref{tab:model-results} summarizes performance by model. Gemini 3 Pro and Claude Opus 4.5 produce the most baseline-beating kernels. GPT-5.2 has strong correctness but fewer baseline wins, indicating that correctness alone does not guarantee competitive performance.
+
+The figures are sourced from the public dashboard export. GPT-5.2 Codex appears at 0\% there because the evaluation failed due to an API format mismatch in the OpenAI Codex endpoint, not model performance. We exclude GPT-5.2 Codex from the tables and aggregate statistics.
+
+\begin{table}[t]
+\centering
+\caption{Model-level results across all problems and GPUs.}
+\label{tab:model-results}
+\input{tables/model_results.tex}
+\end{table}
+
+Table~\ref{tab:level-results} breaks down performance by difficulty level. Pass rates decline sharply at Level 4: only \PassRateLFour\% of runs pass correctness and \BeatRateLFour\% beat the baseline. These tasks include modern attention variants and quantized matmuls, and some use already-optimized Triton baselines.
+
+\begin{table}[t]
+\centering
+\caption{Results by difficulty level.}
+\label{tab:level-results}
+\input{tables/level_results.tex}
+\end{table}

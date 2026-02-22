@@ -1,0 +1,3 @@
+KernelBench v3 is limited to single-GPU kernels and does not yet cover multi-GPU collective patterns. Correctness is evaluated on a single input per run with a fixed tolerance, which may miss some numerical edge cases. The benchmark also uses a fixed number of turns per task; some models might achieve better performance with longer optimization loops.
+
+Future work includes adding multi-GPU tasks, expanding the Level 4 suite as new architectures emerge, and strengthening correctness checks with multi-seed or distributional testing. An open question is how to design evaluation protocols that reward robust kernel engineering without encouraging benchmark-specific shortcuts.

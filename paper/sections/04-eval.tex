@@ -1,0 +1,9 @@
+Each evaluation is a multi-turn agent loop. The model receives a PyTorch reference implementation, GPU target, and constraints, then iteratively proposes CUDA code. We cap the number of turns per problem by level (Table~\ref{tab:levels}) to control cost.
+
+\paragraph{Compilation.} A submission is marked \emph{compiled} if the generated code defines the required model class and executes without errors in the Modal sandbox~\cite{modal-docs}.
+
+\paragraph{Correctness.} A compiled kernel is considered correct if its output matches the reference model within a tolerance. The evaluation script computes the maximum absolute error and compares it to \texttt{atol + rtol * max(|ref|)} with \texttt{atol=0.05} and \texttt{rtol=0.02}.
+
+\paragraph{Performance.} We time the reference model and the generated kernel over 10 iterations with CUDA synchronization, after a short warmup. Speedup is defined as the reference runtime divided by the candidate runtime. A kernel \emph{beats the baseline} when its speedup exceeds 1.0.
+
+\paragraph{Metrics.} We report compilation rate, correctness rate, and baseline-beating rate. For each run, we also log tokens and estimated API cost, enabling cost-adjusted analysis.
