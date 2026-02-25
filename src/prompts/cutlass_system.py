@@ -1,6 +1,26 @@
 """System prompts for CUTLASS kernel generation."""
 
 
+def _tool_section(use_xml_tools: bool) -> str:
+    if use_xml_tools:
+        return """
+
+TOOLS (XML format):
+<tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
+<tool_call><write_file><path>/workspace/solution.py</path><content>YOUR CODE</content></write_file></tool_call>
+<tool_call><edit_file><path>/workspace/solution.py</path><old_str>OLD</old_str><new_str>NEW</new_str></edit_file></tool_call>
+<tool_call><bash><command>YOUR_COMMAND</command></bash></tool_call>
+<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
+    return """
+
+TOOLS:
+- read_file(path): Read file contents. Optional: offset, limit.
+- write_file(path, content): Create or overwrite a file.
+- edit_file(path, old_str, new_str): Replace a unique string in a file.
+- bash(command): Execute shell commands for compilation and testing.
+- submit(solution_path): Submit solution.py for benchmarking."""
+
+
 def get_cutlass_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) -> str:
     """Generate tool-use system prompt for CUTLASS-based solutions."""
 
@@ -35,17 +55,8 @@ DO NOT USE:
 - cuBLAS direct calls as final implementation
 - `import cutlass` Python package (not available in runtime)
 
-REQUIRED WORKFLOW:
-1. `cat /workspace/reference.py`
-2. Write `/workspace/solution.py`
-3. Compile check:
-   `python -c "from solution import Model; print('OK')"`
-4. Submit with `solution.py`
-
-IMPORTANT:
-- This prompt includes a minimal working CUTLASS reference example. Start from it.
-- Correct and compilable code first, then tuning.
-- After compile check prints `OK`, submit immediately.
+INTERFACE: Keep `Model`, `get_inputs`, and `get_init_inputs` compatible with reference.py.
+Priority: correct + compilable first, then tuning.
 
 WORKING CUTLASS 3.x GEMM EXAMPLE (MINIMAL):
 ```cpp
@@ -120,40 +131,18 @@ cutlass_module = load_inline(
     verbose=False,
 )
 
-def solution(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
-    C = torch.empty(A.shape[0], B.shape[1], dtype=A.dtype, device=A.device)
-    cutlass_module.cutlass_gemm(A, B, C)
-    return C
-
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, A, B):
-        return solution(A, B)
+    def forward(self, *args):
+        # Match reference.py forward signature and call CUTLASS extension
+        return cutlass_module.cutlass_op(*[a.contiguous() for a in args])
 ```
 """
 
-    if use_xml_tools:
-        xml_tools = """
-
-TOOLS - Use XML format to call tools:
-
-1. bash:
-<tool_call><bash><command>YOUR_COMMAND_HERE</command></bash></tool_call>
-
-2. submit:
-<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>
-"""
-        return header + body + xml_tools
-
-    native_tools = """
-
-TOOLS:
-- bash: Execute shell commands
-- submit: Submit your solution path
-"""
-    return header + body + native_tools
+    tools = _tool_section(use_xml_tools)
+    return header + body + tools
 
 
 def get_cutlass_reasoning_system_prompt(gpu_name: str, vram_gb: int) -> str:

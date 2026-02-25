@@ -1,6 +1,26 @@
 """System prompts for CuTile Python DSL kernel generation."""
 
 
+def _tool_section(use_xml_tools: bool) -> str:
+    if use_xml_tools:
+        return """
+
+TOOLS (XML format):
+<tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
+<tool_call><write_file><path>/workspace/solution.py</path><content>YOUR CODE</content></write_file></tool_call>
+<tool_call><edit_file><path>/workspace/solution.py</path><old_str>OLD</old_str><new_str>NEW</new_str></edit_file></tool_call>
+<tool_call><bash><command>YOUR_COMMAND</command></bash></tool_call>
+<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
+    return """
+
+TOOLS:
+- read_file(path): Read file contents. Optional: offset, limit.
+- write_file(path, content): Create or overwrite a file.
+- edit_file(path, old_str, new_str): Replace a unique string in a file.
+- bash(command): Execute shell commands for compilation and testing.
+- submit(solution_path): Submit solution.py for benchmarking."""
+
+
 def get_cutile_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) -> str:
     """Generate system prompt for CuTile-based solutions."""
     header = (
@@ -151,29 +171,11 @@ DO NOT USE:
 - Tile sizes computed from input tensor shapes at runtime
 - `padding_mode` argument with `ct.store` (unsupported)
 
-WORKFLOW:
-1. cat /workspace/reference.py
-2. Write /workspace/solution.py using CuTile Python
-3. Compile check: python -c "from solution import Model; m = Model(); print('OK')"
-4. Submit when compile check passes
+INTERFACE: Keep `Model`, `get_inputs`, and `get_init_inputs` compatible with reference.py.
 """
 
-    if use_xml_tools:
-        xml_tools = """
-
-TOOLS - Use XML format:
-<tool_call><bash><command>YOUR_COMMAND_HERE</command></bash></tool_call>
-<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>
-"""
-        return header + body + xml_tools
-
-    native_tools = """
-
-TOOLS:
-- bash: Execute shell commands
-- submit: Submit your solution path
-"""
-    return header + body + native_tools
+    tools = _tool_section(use_xml_tools)
+    return header + body + tools
 
 
 def get_cutile_reasoning_system_prompt(gpu_name: str, vram_gb: int) -> str:

@@ -25,20 +25,18 @@ Last updated: 2026-02-22
   - `uv run ruff check . --fix`
   - `uv run pytest`
 
-## Implemented Harnesses
-- `batch_eval.py` (CUDABench)
-- `triton_batch_eval.py` (TritonBench)
-- `cutlass_batch_eval.py` (CUTLASSBench)
-- `cute_batch_eval.py` (CuTeBench)
-- `cutile_batch_eval.py` (CuTileBench)
-- `metal_batch_eval.py` (MetalBench)
-- `graphics_batch_eval.py` (GraphicsBench)
+## Architecture
+Single CLI entry point: `bench.py` with subcommands (`batch`, `eval`, `list-models`, etc.).
 
-Supporting eval modules and prompts are present under:
-- `*_eval.py`
-- `src/prompts/*.py`
-- `src/config/*.py`
-- `src/agent/*.py`
+All evaluation logic is in `src/`:
+- `src/backends/` — Backend class per benchmark (cuda, triton, cutlass, cute, cutile, graphics, metal)
+- `src/eval/` — Agent loop (`agent.py`), context building, results, guardrails
+- `src/batch.py` — Batch orchestration (parallel/sequential execution, aggregation)
+- `src/models.py` — Model registry and provider clients
+- `src/api.py` — API communication, token tracking, cost estimation
+- `src/prompts/` — Per-backend system prompts
+- `src/config/` — Benchmark problems, precision matrix, runtime validation
+- `src/agent/` — Sandbox implementations (Modal, Metal, Local)
 
 ## Current GPU Policy (Enforced)
 | Benchmark | Allowed GPUs |
@@ -106,36 +104,37 @@ Current curated problem counts are in `problem_inventory.md`:
 - `.venv` exists there.
 
 ## Key Infra Changes Already Landed
-- Per-problem wall clock timeout in `modal_eval.py`
+- Consolidated 15 root-level eval scripts into `src/` with single `bench.py` CLI
+- Per-problem wall clock timeout in agent loop
 - Auto-submit behavior when compilation/import checks pass
 - Per-turn artifacts under `outputs/.../turns/`
 - Precision matrix at `src/config/precision_matrix.py`
 - Precision-aware tolerance, NaN/Inf checks, determinism checks
-- Aggregation script: `aggregate_results.py`
-- Baseline validator script: `validate_baselines.py`
+- Aggregation in `src/batch.py`
+- Baseline validator in `src/validate.py`
 
 ## Fresh Session Resume Plan
 1. Verify environment quickly
 ```bash
-uv run python batch_eval.py --list-models
-uv run python batch_eval.py --list-problems
+uv run python bench.py list-models
+uv run python bench.py list-backends
 ```
 
 2. Fast smoke test per target benchmark (dry-run)
 ```bash
-uv run python batch_eval.py --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
-uv run python triton_batch_eval.py --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
-uv run python cutlass_batch_eval.py --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
-uv run python cute_batch_eval.py --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
-uv run python cutile_batch_eval.py --models minimax/minimax-m2.5 --gpus B200 --levels 1 --problems-per-level 1 --dry-run
-uv run python graphics_batch_eval.py --models minimax/minimax-m2.5 --gpus RTX3090 --levels 1 --problems-per-level 1 --dry-run
+uv run python bench.py batch cuda --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
+uv run python bench.py batch triton --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
+uv run python bench.py batch cutlass --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
+uv run python bench.py batch cute --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
+uv run python bench.py batch cutile --models minimax/minimax-m2.5 --gpus B200 --levels 1 --problems-per-level 1 --dry-run
+uv run python bench.py batch graphics --models minimax/minimax-m2.5 --gpus RTX3090 --levels 1 --problems-per-level 1 --dry-run
 ```
 
 3. Metal-only check from macbook
 ```bash
 ssh macbook
 cd ~/MetalBench
-uv run python metal_batch_eval.py --models minimax/minimax-m2.5 --gpus M4MAX --levels 1 --problems-per-level 1 --dry-run
+uv run python bench.py batch metal --models minimax/minimax-m2.5 --gpus M4MAX --levels 1 --problems-per-level 1 --dry-run
 ```
 
 4. Run targeted real evals after dry-runs pass

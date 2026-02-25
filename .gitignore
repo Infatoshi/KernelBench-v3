@@ -87,3 +87,17 @@ repos/
 htmlcov/
 .pytest_cache/
 .tox/
+
+# Linter cache
+.ruff_cache/
+
+# Audit logs
+audit/
+
+# Misc logs
+*.log
+excalidraw.log
+
+# Agent config (local-only, not for public repo)
+AGENTS.md
+.cursorrules

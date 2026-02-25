@@ -20,7 +20,7 @@ def _top_level_assignments(path: Path) -> set[str]:
 
 
 def test_all_problems_have_required_metadata() -> None:
-    problems = sorted(Path("KernelBench").rglob("*.py"))
+    problems = sorted(Path("problems").rglob("*.py"))
     missing: list[str] = []
 
     for problem in problems:

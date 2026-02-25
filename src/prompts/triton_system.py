@@ -1,6 +1,27 @@
 """System prompts for Triton kernel generation."""
 
 
+def _tool_section(use_xml_tools: bool) -> str:
+    """Return the standard tool description block for all backend prompts."""
+    if use_xml_tools:
+        return """
+
+TOOLS (XML format):
+<tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
+<tool_call><write_file><path>/workspace/solution.py</path><content>YOUR CODE</content></write_file></tool_call>
+<tool_call><edit_file><path>/workspace/solution.py</path><old_str>OLD</old_str><new_str>NEW</new_str></edit_file></tool_call>
+<tool_call><bash><command>YOUR_COMMAND</command></bash></tool_call>
+<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
+    return """
+
+TOOLS:
+- read_file(path): Read file contents. Optional: offset, limit.
+- write_file(path, content): Create or overwrite a file.
+- edit_file(path, old_str, new_str): Replace a unique string in a file.
+- bash(command): Execute shell commands for compilation and testing.
+- submit(solution_path): Submit solution.py for benchmarking."""
+
+
 def get_triton_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) -> str:
     """Generate tool-use system prompt for Triton solutions."""
     base_prompt = f"""You are an expert GPU kernel engineer running in an isolated benchmark sandbox on an NVIDIA {gpu_name} GPU ({vram_gb}GB VRAM).
@@ -20,17 +41,7 @@ DO NOT USE:
 - torch.compile
 - Other kernel frameworks
 
-REQUIRED WORKFLOW:
-1. Use bash tool: `cat /workspace/reference.py` to inspect the task
-2. Use bash tool to write `/workspace/solution.py`
-3. Use bash tool: `python -c "from solution import Model; print('OK')"` to validate import
-4. Use submit tool with path `solution.py`
-
-IMPORTANT:
-- Actually write the file with the bash tool.
-- Keep `Model`, `get_inputs`, and `get_init_inputs` compatible with reference.py.
-- Once the import check prints `OK`, IMMEDIATELY call submit and stop.
-- Do not rewrite solution.py after a successful import check.
+INTERFACE: Keep `Model`, `get_inputs`, and `get_init_inputs` compatible with reference.py.
 
 Preferred output structure:
 ```python
@@ -61,26 +72,8 @@ def get_init_inputs():
 ```
 """
 
-    if use_xml_tools:
-        xml_tools = """
-
-TOOLS - Use XML format to call tools:
-
-1. bash:
-<tool_call><bash><command>YOUR_COMMAND_HERE</command></bash></tool_call>
-
-2. submit:
-<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>
-"""
-        return base_prompt + xml_tools
-
-    native_tools = """
-
-TOOLS:
-- bash: Execute shell commands
-- submit: Submit your solution path
-"""
-    return base_prompt + native_tools
+    tools = _tool_section(use_xml_tools)
+    return base_prompt + tools
 
 
 def get_triton_reasoning_system_prompt(gpu_name: str, vram_gb: int) -> str:

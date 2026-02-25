@@ -1,122 +1,73 @@
-# KernelBench-v3
+# KernelBench v3
 
-GPU kernel generation benchmark suite for LLMs.
+GPU kernel optimization benchmark for frontier LLMs. Tests whether AI models can write kernels that beat `torch.compile` on real workloads.
 
-## Benchmarks
-
-| Benchmark | DSL | Hardware | Problems |
-|-----------|-----|----------|----------|
-| CUDABench | Raw CUDA | RTX3090, H100, B200 | 41 |
-| TritonBench | Triton | RTX3090, H100, B200 | 41 |
-| CUTLASSBench | CUTLASS | H100, B200 | 13 |
-| CuTeBench | CuTe | H100, B200 | 13 |
-| CuTileBench | CuTile Python DSL | B200 | 3 |
-| MetalBench | Metal/MLX | M4MAX | 41 |
-| GraphicsBench | CUDA/Triton | RTX3090 | 2 |
+**7 backends**: CUDA, Triton, CUTLASS, CuTe, CuTile, Metal/MLX, Graphics
+**3 GPU families**: NVIDIA (RTX3090, H100, B200), Apple Silicon (M4 Max)
+**85 problems**: Deep learning ops, physics sims, rendering, scientific compute
 
 ## Quick Start
 
 ```bash
-# Install dependencies
 uv sync
 
-# Run one benchmark family
-uv run python batch_eval.py --models anthropic/claude-opus-4.6 --gpus H100 --levels 1,2,3,4 --max-turns 10 --sequential
+uv run python bench.py list-models
+uv run python bench.py list-backends
 
-# Run all benchmark families with automatic platform filtering
-uv run python run_all_benchmarks.py anthropic/claude-opus-4.6
+# Run CUDA benchmark on RTX3090
+uv run python bench.py batch cuda --models deepseek/deepseek-v3.2 --gpus RTX3090 --levels 1,2,3,4 --workers 4
 
-# Aggregate results
-uv run python aggregate_results.py --output results.csv
+# Run Metal benchmark on MacBook
+cd ~/MetalBench && uv run python bench.py batch metal --models minimax/minimax-m2.5 --gpus M4MAX --levels 1,2,3,4
+
+# View results
+uv run python bench.py summary outputs/batch_eval/run_XXXXXXXX
 ```
 
-## GPU Restrictions
+## How It Works
 
-Each batch entrypoint enforces benchmark-specific GPU constraints and fails fast with explicit errors.
+Each problem has a `reference.py` with a PyTorch `Model` class. The LLM agent gets N turns in a sandboxed environment to write an optimized `solution.py` using the target backend (CUDA C++, Triton, MLX, etc.). The solution is benchmarked against the reference — speedup > 1.0x means the model beat the baseline.
 
-- CUDABench: `RTX3090`, `H100`, `B200`
-- TritonBench: `RTX3090`, `H100`, `B200`
-- CUTLASSBench: `H100`, `B200`
-- CuTeBench: `H100`, `B200`
-- CuTileBench: `B200`
-- MetalBench: `M4MAX`
-- GraphicsBench: `RTX3090`
+The agent has tools: `read_file`, `write_file`, `edit_file`, `bash`, `submit`. It reads the reference, writes a solution, tests compilation, and submits for benchmarking. Guardrails prevent reward hacking (e.g., falling back to PyTorch ops instead of writing actual kernels).
 
-Platform checks:
-- `M4MAX` is macOS-only (`Darwin`).
-- NVIDIA benchmark paths are Linux-only in this harness.
+## Benchmarks
 
-## Hardware Requirements
+| Backend | Language | GPUs | Problems |
+|---|---|---|---|
+| `cuda` | CUDA C++ | RTX3090, H100, B200 | 41 |
+| `triton` | Triton | RTX3090, H100, B200 | 41 |
+| `cutlass` | CUTLASS 3.x | H100, B200 | 13 |
+| `cute` | CuTe | H100, B200 | 13 |
+| `cutile` | CuTile Python | B200 | 3 |
+| `metal` | MLX (Metal) | M4MAX | 63 |
+| `graphics` | Triton | RTX3090 | 2 |
 
-- NVIDIA (Linux/Modal): `RTX3090`, `H100`, `B200`
-- Apple Silicon (macOS): `M4MAX` (MetalBench only)
+## Problem Levels
 
-## Supported Models
+- **L1** (15 problems): Simple operators — matmul, softmax, conv, LayerNorm, GELU
+- **L2** (15 problems): Fused operations — matmul + activation + norm chains
+- **L3** (3 problems): Architecture blocks — attention, transformer block
+- **L4** (8 problems): Novel layers — DeepSeek MLA/MoE, GQA, FP8/INT4, GatedDeltaNet
+- **Metal M1-M4** (26 problems): Image processing, physics, rendering, scientific compute
+- **Graphics** (2 problems): Bloom effect, particle simulation
+- **Tile** (13 problems): GEMM variants for CUTLASS/CuTe
+- **CuTile** (3 problems): Persistent/stream-K/warp-specialized GEMM
 
-Current model registry (`modal_eval.py:MODELS`):
+## Results
 
-- `claude-opus-4.5`
-- `claude-sonnet-4.5`
-- `gpt-5.2`
-- `gemini-3-flash`
-- `gemini-3-pro`
-- `grok-4.1`
-- `glm-4.7`
-- `deepseek-v3.2`
-- `kimi-k2-thinking`
-- `minimax-m2.1`
-- `z-ai/glm-5`
-- `openrouter/aurora-alpha`
-- `anthropic/claude-opus-4.6`
-- `openai/gpt-5.2-codex`
-- `google/gemini-3-flash-preview`
-- `google/gemini-3-pro-preview`
-- `minimax/minimax-m2.5`
-- `deepseek/deepseek-v3.2`
-- `x-ai/grok-4.1-fast`
-- `moonshotai/kimi-k2.5`
-- `kimi-k2.5`
+Results are saved to `outputs/batch_eval/run_YYYYMMDD_HHMMSS/` with:
+- `results.jsonl` — per-problem results (compiled, correct, speedup, tokens, cost)
+- `kernels/` — submitted solution code (viewable on website)
+- `summary.json` — aggregated statistics
 
-To list models directly:
+## For LLMs
 
-```bash
-uv run python batch_eval.py --list-models
-```
+See [docs/LLMs.md](docs/LLMs.md) for the full autonomous agent guide — architecture, commands, rules, and session checklist. Everything needed to run evals without human intervention.
 
-## Validation Commands
+## Docs
 
-```bash
-# Wiring check (no expensive execution)
-uv run python batch_eval.py --models minimax/minimax-m2.5 --gpus H100 --levels 1 --problems-per-level 1 --dry-run
-
-# Wrong GPU examples (expected graceful failures)
-uv run python cutile_batch_eval.py --gpus H100 --dry-run
-uv run python metal_batch_eval.py --gpus H100 --dry-run
-uv run python cutlass_batch_eval.py --gpus RTX3090 --dry-run
-uv run python graphics_batch_eval.py --gpus H100 --dry-run
-```
-
-## Repository Layout
-
-```text
-KernelBench-v3/
-├── batch_eval.py
-├── triton_batch_eval.py
-├── cutlass_batch_eval.py
-├── cute_batch_eval.py
-├── cutile_batch_eval.py
-├── metal_batch_eval.py
-├── graphics_batch_eval.py
-├── run_all_benchmarks.py
-├── modal_eval.py
-├── aggregate_results.py
-├── KernelBench/
-│   ├── level1/ level2/ level3/ level4/
-│   ├── tile_specialized/
-│   ├── cutile/
-│   └── graphics/
-└── outputs/
-```
+- [Problem Inventory](docs/problem_inventory.md) — complete listing of all problems
+- [Development Log](docs/devlog.md) — design decisions and incremental progress
 
 ## License
 

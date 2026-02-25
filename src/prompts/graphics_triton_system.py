@@ -1,6 +1,26 @@
 """System prompts for GraphicsBench on CUDA with Triton kernels."""
 
 
+def _tool_section(use_xml_tools: bool) -> str:
+    if use_xml_tools:
+        return """
+
+TOOLS (XML format):
+<tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
+<tool_call><write_file><path>/workspace/solution.py</path><content>YOUR CODE</content></write_file></tool_call>
+<tool_call><edit_file><path>/workspace/solution.py</path><old_str>OLD</old_str><new_str>NEW</new_str></edit_file></tool_call>
+<tool_call><bash><command>YOUR_COMMAND</command></bash></tool_call>
+<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
+    return """
+
+TOOLS:
+- read_file(path): Read file contents. Optional: offset, limit.
+- write_file(path, content): Create or overwrite a file.
+- edit_file(path, old_str, new_str): Replace a unique string in a file.
+- bash(command): Execute shell commands for compilation and testing.
+- submit(solution_path): Submit solution.py for benchmarking."""
+
+
 def get_graphics_triton_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) -> str:
     """Generate tool-use system prompt for graphics compute tasks on NVIDIA CUDA."""
 
@@ -25,33 +45,11 @@ DO NOT USE:
 - Raw CUDA C++ `load_inline` paths
 - Fallback that calls reference model implementation
 
-REQUIRED WORKFLOW:
-1. `cat /workspace/reference.py`
-2. Write `/workspace/solution.py`
-3. `python -c "import reference, solution, torch; m=solution.Model(*reference.get_init_inputs()).cuda().eval(); inputs=[x.cuda() if isinstance(x, torch.Tensor) else x for x in reference.get_inputs()]; _=m(*inputs); print('OK')"`
-4. Submit `solution.py`
+INTERFACE: Keep `Model`, `get_inputs`, and `get_init_inputs` compatible with reference.py.
 """
 
-    if use_xml_tools:
-        xml_tools = """
-
-TOOLS - Use XML format to call tools:
-
-1. bash:
-<tool_call><bash><command>YOUR_COMMAND_HERE</command></bash></tool_call>
-
-2. submit:
-<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>
-"""
-        return base_prompt + xml_tools
-
-    native_tools = """
-
-TOOLS:
-- bash: Execute shell commands
-- submit: Submit your solution path
-"""
-    return base_prompt + native_tools
+    tools = _tool_section(use_xml_tools)
+    return base_prompt + tools
 
 
 def get_graphics_triton_reasoning_system_prompt(gpu_name: str, vram_gb: int) -> str:

@@ -30,8 +30,17 @@ BENCHMARK_PROBLEMS: Dict[str, Dict[str, Any]] = {
         "hardware": ["B200"],
     },
     "metal": {
-        "dirs": ["level1", "level2", "level3", "level4"],
+        "dirs": [
+            "level1", "level2", "level3", "level4",
+            "metal_level1", "metal_level2", "metal_level3", "metal_level4",
+        ],
         "hardware": ["M4MAX"],
+        "exclude": [
+            "4_FP8_Matmul.py",
+            "6_INT4_Quantized_GEMM.py",
+            "7_GatedDeltaNet.py",
+            "8_KimiDeltaAttention.py",
+        ],
     },
     "graphics": {
         "dirs": ["graphics"],
@@ -74,7 +83,7 @@ def get_problem_hardware_required(problem_path: Path) -> Optional[List[str]]:
 
 def _problem_level(problem_path: Path, default_level: int) -> int:
     assignments = _read_module_assignments(problem_path)
-    for key in ("GRAPHICS_LEVEL", "SPECIALIZED_LEVEL", "CUTILE_LEVEL"):
+    for key in ("METAL_LEVEL", "GRAPHICS_LEVEL", "SPECIALIZED_LEVEL", "CUTILE_LEVEL"):
         value = assignments.get(key)
         if isinstance(value, int):
             return value
@@ -101,17 +110,22 @@ def find_problems_for_benchmark(project_root: Path, benchmark: str, levels: List
     if config is None:
         raise ValueError(f"Unknown benchmark: {benchmark}")
 
-    kernelbench_dir = project_root / "KernelBench"
+    kernelbench_dir = project_root / "problems"
     requested = set(levels)
+    exclude = set(config.get("exclude", []))
     problems: List[Tuple[int, Path]] = []
 
     for dirname in config["dirs"]:
         default_level = 1
-        if dirname.startswith("level"):
-            try:
-                default_level = int(dirname.replace("level", ""))
-            except ValueError:
-                default_level = 1
+        # Extract trailing digit from e.g. "level3", "metal_level2"
+        stripped = dirname.replace("metal_", "").replace("level", "")
+        try:
+            default_level = int(stripped)
+        except ValueError:
+            default_level = 1
         problems.extend(_discover_dir(kernelbench_dir / dirname, default_level=default_level, allowed_levels=requested))
+
+    if exclude:
+        problems = [(lvl, p) for lvl, p in problems if p.name not in exclude]
 
     return problems

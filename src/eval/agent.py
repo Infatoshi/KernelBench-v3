@@ -1,0 +1,662 @@
+from __future__ import annotations
+
+import json
+import os
+import signal
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from src.api import (
+    _estimate_cost,
+    _extract_token_usage,
+    _format_assistant_message,
+    _format_tool_results,
+    _get_model_response,
+    _parse_response,
+)
+from src.eval.context import (
+    augment_system_prompt,
+    build_initial_user_message,
+    extract_reference_metadata,
+    inject_workspace_context,
+    prepare_workspace_context,
+    seed_workspace_context,
+)
+from src.eval.results import EvalResult, apply_benchmark_metrics, attach_solution_metadata
+from src.models import ModelConfig, get_provider_client
+from src.parsing import extract_python_code
+
+GPU_SPECS = {
+    "L40S": ("L40S", 48),
+    "A100": ("A100", 40),
+    "H100": ("H100", 80),
+    "B200": ("B200", 192),
+    "RTX3090": ("RTX 3090", 24),
+    "LOCAL": ("Local CUDA GPU", 24),
+    "M4MAX": ("M4 Max", 128),
+}
+
+LOCAL_GPUS = {"RTX3090", "LOCAL", "M4MAX"}
+
+MAX_PROBLEM_TIME_SECONDS = {1: 300, 2: 600, 3: 900, 4: 1200}
+
+
+def _get_turn_artifact_dir() -> Optional[Path]:
+    raw = os.environ.get("KB_TURN_ARTIFACT_DIR")
+    if not raw:
+        return None
+    artifact_dir = Path(raw)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    return artifact_dir
+
+
+def _write_turn_artifact(turn: int, suffix: str, content: str) -> None:
+    artifact_dir = _get_turn_artifact_dir()
+    if artifact_dir is None:
+        return
+    try:
+        path = artifact_dir / f"turn_{turn}_{suffix}"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+    except Exception:
+        pass
+
+
+def _format_command_result(cmd: str, cmd_result: dict) -> str:
+    return (
+        f"command: {cmd}\n"
+        f"return_code: {cmd_result.get('returncode')}\n"
+        f"stdout:\n{cmd_result.get('stdout', '')}\n"
+        f"stderr:\n{cmd_result.get('stderr', '')}\n"
+    )
+
+
+def _auto_submit_if_compilable(
+    sandbox, submitted: bool, solution_path: Optional[str]
+) -> tuple[bool, Optional[str]]:
+    if submitted:
+        return submitted, solution_path
+
+    if not sandbox.file_exists("solution.py"):
+        return submitted, solution_path
+
+    compile_checks = [
+        ('python -c "from solution import Model; m = Model(); print(\'OK\')"', "Model import check OK"),
+        ('python -c "import solution; print(\'OK\')"', "module import check OK"),
+    ]
+    compile_logs: List[str] = []
+
+    for compile_cmd, success_label in compile_checks:
+        compile_result = sandbox.run_command(compile_cmd, timeout=120)
+        compile_logs.append(_format_command_result(compile_cmd, compile_result))
+        if compile_result["returncode"] == 0 and "OK" in compile_result["stdout"]:
+            _write_turn_artifact(999, "compile.log", "\n\n".join(compile_logs))
+            print(f"  AUTO-SUBMITTED: solution.py ({success_label})", flush=True)
+            return True, "solution.py"
+
+    _write_turn_artifact(999, "compile.log", "\n\n".join(compile_logs))
+    return submitted, solution_path
+
+
+def _begin_problem_alarm(level: int, max_seconds_by_level: Optional[Dict[int, int]] = None) -> Optional[Any]:
+    timeout_map = max_seconds_by_level or MAX_PROBLEM_TIME_SECONDS
+    timeout_seconds = timeout_map.get(level)
+    if timeout_seconds is None or timeout_seconds <= 0:
+        return None
+    if not hasattr(signal, "SIGALRM"):
+        return None
+
+    def _timeout_handler(_signum, _frame):
+        raise TimeoutError("Problem time limit exceeded")
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout_seconds)
+    return previous_handler
+
+
+def _clear_problem_alarm(previous_handler: Optional[Any]) -> None:
+    if previous_handler is None:
+        return
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _run_gemini_agent(
+    model_config: ModelConfig,
+    sandbox,
+    system_prompt: str,
+    initial_user_message: str,
+    max_turns: int,
+) -> tuple:
+    import google.generativeai as genai
+    from google.generativeai.types import FunctionDeclaration, Tool
+
+    bash_func = FunctionDeclaration(
+        name="bash",
+        description="Execute a shell command in the sandbox",
+        parameters={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The shell command to execute"}
+            },
+            "required": ["command"],
+        },
+    )
+
+    submit_func = FunctionDeclaration(
+        name="submit",
+        description="Submit your optimized solution for benchmarking",
+        parameters={
+            "type": "object",
+            "properties": {
+                "solution_path": {"type": "string", "description": "Path to the solution file"}
+            },
+            "required": ["solution_path"],
+        },
+    )
+
+    tools = Tool(function_declarations=[bash_func, submit_func])
+
+    model = genai.GenerativeModel(
+        model_config.model_id,
+        system_instruction=system_prompt,
+        tools=[tools],
+    )
+    chat = model.start_chat()
+
+    submitted = False
+    solution_path = None
+    turns_used = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    response = chat.send_message(initial_user_message)
+
+    if hasattr(response, "usage_metadata") and response.usage_metadata:
+        total_input_tokens += getattr(response.usage_metadata, "prompt_token_count", 0)
+        total_output_tokens += getattr(response.usage_metadata, "candidates_token_count", 0)
+
+    for turn in range(max_turns):
+        turns_used = turn + 1
+        print(f"\n[Turn {turn + 1}/{max_turns}]", flush=True)
+
+        function_calls = []
+        text_parts = []
+
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "function_call") and part.function_call:
+                function_calls.append(part.function_call)
+            elif hasattr(part, "text") and part.text:
+                text_parts.append(part.text)
+
+        if text_parts:
+            text = " ".join(text_parts)
+            text = text[:200] + "..." if len(text) > 200 else text
+            print(f"Assistant: {text}", flush=True)
+        _write_turn_artifact(turn + 1, "response.txt", "\n".join(text_parts))
+
+        if not function_calls:
+            print("No tool calls - agent finished", flush=True)
+            break
+
+        function_responses = []
+        for fc in function_calls:
+            tool_name = fc.name
+            tool_args = dict(fc.args)
+            print(f"  Tool: {tool_name}", flush=True)
+
+            if tool_name == "bash":
+                cmd = tool_args.get("command", "")
+                print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
+                cmd_result = sandbox.run_command(cmd)
+                output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
+                _write_turn_artifact(turn + 1, "compile.log", _format_command_result(cmd, cmd_result))
+                if cmd_result["stdout"]:
+                    out = cmd_result["stdout"][:150] + "..." if len(cmd_result["stdout"]) > 150 else cmd_result["stdout"]
+                    print(f"    -> {out}", flush=True)
+                function_responses.append(
+                    genai.protos.Part(
+                        function_response=genai.protos.FunctionResponse(
+                            name=tool_name, response={"result": output}
+                        )
+                    )
+                )
+
+            elif tool_name == "submit":
+                solution_path = tool_args.get("solution_path", "solution.py")
+                submitted = True
+                print(f"  SUBMITTED: {solution_path}", flush=True)
+                function_responses.append(
+                    genai.protos.Part(
+                        function_response=genai.protos.FunctionResponse(
+                            name=tool_name, response={"result": f"Submitted: {solution_path}"}
+                        )
+                    )
+                )
+
+        if submitted:
+            break
+
+        response = chat.send_message(function_responses)
+
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            total_input_tokens += getattr(response.usage_metadata, "prompt_token_count", 0)
+            total_output_tokens += getattr(response.usage_metadata, "candidates_token_count", 0)
+
+    submitted, solution_path = _auto_submit_if_compilable(sandbox, submitted, solution_path)
+    return submitted, solution_path, turns_used, total_input_tokens, total_output_tokens
+
+
+def _run_reasoning_agent(
+    model_config: ModelConfig,
+    sandbox,
+    system_prompt: str,
+    initial_user_message: str,
+    max_turns: int,
+) -> tuple:
+    from openai import OpenAI
+
+    client = OpenAI(
+        api_key=os.environ.get("OPENROUTER_API_KEY"),
+        base_url="https://openrouter.ai/api/v1",
+    )
+
+    submitted = False
+    solution_path = "solution.py"
+    turns_used = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": initial_user_message},
+    ]
+
+    for turn in range(max_turns):
+        turns_used = turn + 1
+        print(f"\n[Turn {turn + 1}/{max_turns}]", flush=True)
+
+        try:
+            response = client.chat.completions.create(
+                model=model_config.model_id,
+                messages=messages,
+                max_tokens=16384,
+                extra_body={"reasoning": {"enabled": True}},
+            )
+        except Exception as e:
+            print(f"API error: {e}", flush=True)
+            break
+
+        if hasattr(response, "usage") and response.usage:
+            input_toks = getattr(response.usage, "prompt_tokens", 0)
+            output_toks = getattr(response.usage, "completion_tokens", 0)
+            total_input_tokens += input_toks
+            total_output_tokens += output_toks
+
+        content = response.choices[0].message.content or ""
+        text_preview = content[:300] + "..." if len(content) > 300 else content
+        print(f"Assistant: {text_preview}", flush=True)
+        _write_turn_artifact(turn + 1, "response.txt", content)
+
+        messages.append({"role": "assistant", "content": content})
+
+        code = extract_python_code(content)
+        if not code:
+            print("  No Python code found in response", flush=True)
+            messages.append({
+                "role": "user",
+                "content": "I couldn't find a Python code block in your response. Please provide the complete solution.py in a ```python code block.",
+            })
+            continue
+
+        print(f"  Extracted {len(code)} chars of Python code", flush=True)
+
+        sandbox.write_file("solution.py", code)
+        _write_turn_artifact(turn + 1, "solution.py", code)
+
+        print("  Testing compilation...", flush=True)
+        compile_result = sandbox.run_command(
+            'python -c "from solution import Model; m = Model(); print(\'OK\')"',
+            timeout=120,
+        )
+        _write_turn_artifact(
+            turn + 1,
+            "compile.log",
+            _format_command_result(
+                'python -c "from solution import Model; m = Model(); print(\'OK\')"',
+                compile_result,
+            ),
+        )
+
+        if compile_result["returncode"] == 0 and "OK" in compile_result["stdout"]:
+            print("  Compilation: OK", flush=True)
+            submitted = True
+            break
+        else:
+            error_msg = compile_result["stderr"] or compile_result["stdout"] or "Unknown error"
+            if len(error_msg) > 2000:
+                error_msg = error_msg[:2000] + "\n... (truncated)"
+            print(f"  Compilation FAILED: {error_msg[:200]}...", flush=True)
+
+            messages.append({
+                "role": "user",
+                "content": f"Your code failed to compile/import with this error:\n\n```\n{error_msg}\n```\n\nPlease fix the error and provide the corrected solution.py in a ```python code block.",
+            })
+
+    submitted, solution_path = _auto_submit_if_compilable(sandbox, submitted, solution_path)
+    return submitted, solution_path, turns_used, total_input_tokens, total_output_tokens
+
+
+def _create_default_sandbox(gpu: str, problem_code: str, local_gpus: set):
+    from src.agent.local_sandbox import LocalSandbox, LocalSandboxConfig
+    from src.agent.modal_sandbox import ModalSandbox, ModalSandboxConfig
+
+    if gpu in local_gpus:
+        return LocalSandbox(problem_code, LocalSandboxConfig(timeout=300))
+    return ModalSandbox(problem_code, ModalSandboxConfig(gpu=gpu, timeout=300, sandbox_timeout=3600))
+
+
+def _finalize_agent_result(
+    result: EvalResult,
+    submitted: bool,
+    solution_path: Optional[str],
+    input_tokens: int,
+    output_tokens: int,
+    turns_used: int,
+    model_config: ModelConfig,
+    sandbox,
+    backend,
+    gpu: str,
+    level: int,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
+) -> None:
+    result.turns = turns_used
+    result.submitted = submitted
+    result.input_tokens = input_tokens
+    result.output_tokens = output_tokens
+    result.total_tokens = input_tokens + output_tokens
+    result.cache_creation_tokens = cache_creation_tokens
+    result.cache_read_tokens = cache_read_tokens
+    result.estimated_cost_usd = _estimate_cost(
+        model_config.model_id,
+        model_config.provider,
+        input_tokens,
+        output_tokens,
+        cache_creation_tokens,
+        cache_read_tokens,
+    )
+
+    cache_info = ""
+    if cache_creation_tokens or cache_read_tokens:
+        cache_info = f" | Cache Create: {cache_creation_tokens:,} | Cache Read: {cache_read_tokens:,}"
+    print(
+        f"\n[Token Usage] Input: {input_tokens:,} | Output: {output_tokens:,} | Total: {input_tokens + output_tokens:,}{cache_info}",
+        flush=True,
+    )
+    if result.estimated_cost_usd:
+        print(f"[Est. Cost] ${result.estimated_cost_usd:.4f}", flush=True)
+
+    if submitted and solution_path:
+        print("\n" + "=" * 60, flush=True)
+        print("RUNNING BENCHMARK", flush=True)
+        print("=" * 60, flush=True)
+
+        attach_solution_metadata(result, solution_path, sandbox)
+        benchmark_result = backend.run_benchmark(
+            sandbox,
+            solution_path,
+            hardware=gpu,
+            level=level,
+        )
+        if benchmark_result is not None:
+            apply_benchmark_metrics(result, benchmark_result)
+        else:
+            from modal_eval import _run_benchmark
+
+            legacy_result = _run_benchmark(
+                sandbox,
+                solution_path,
+                hardware=gpu,
+                level=level,
+                backend=backend.name,
+            )
+            apply_benchmark_metrics(result, legacy_result)
+    else:
+        result.error = "No solution submitted"
+
+
+def run_eval(
+    backend,
+    model_config: ModelConfig,
+    gpu: str,
+    problem_code: str,
+    problem_name: str,
+    level: int,
+    max_turns: int = 20,
+) -> EvalResult:
+    result = EvalResult(
+        model=model_config.name,
+        gpu=gpu,
+        problem=problem_name,
+        level=level,
+    )
+
+    start_time = time.time()
+
+    gpu_specs = getattr(backend, "gpu_specs", GPU_SPECS)
+    gpu_name, vram = gpu_specs.get(gpu, ("Unknown", 80))
+
+    force_reasoning = getattr(backend, "force_reasoning_mode", False)
+
+    system_prompt = backend.get_system_prompt(gpu_name, vram, use_xml_tools=model_config.use_xml_tools)
+    system_prompt = augment_system_prompt(system_prompt, backend=backend.name)
+
+    reference_metadata = extract_reference_metadata(problem_code)
+
+    local_gpus = getattr(backend, "local_gpus", LOCAL_GPUS)
+    if hasattr(backend, "create_sandbox"):
+        sandbox = backend.create_sandbox(gpu, problem_code)
+    else:
+        sandbox = _create_default_sandbox(gpu, problem_code, local_gpus)
+
+    alarm_handler = _begin_problem_alarm(level)
+    try:
+        sandbox.start()
+        print(f"Sandbox started: {sandbox.get_gpu_info()}", flush=True)
+
+        context_bundle = prepare_workspace_context(
+            backend=backend.name,
+            gpu_name=gpu_name,
+            vram_gb=vram,
+            level=level,
+            problem_name=problem_name,
+            metadata=reference_metadata,
+            sandbox=sandbox,
+            backend_obj=backend,
+        )
+        seed_workspace_context(sandbox=sandbox, context_bundle=context_bundle)
+        system_prompt = inject_workspace_context(system_prompt, context_bundle)
+
+        initial_user_message = build_initial_user_message(
+            backend=backend.name,
+            problem_name=problem_name,
+            level=level,
+            gpu_name=gpu_name,
+            max_turns=max_turns,
+            reference_code=problem_code,
+            metadata=reference_metadata,
+        )
+
+        if model_config.provider == "gemini":
+            submitted, solution_path, turns_used, input_tokens, output_tokens = _run_gemini_agent(
+                model_config, sandbox, system_prompt, initial_user_message, max_turns
+            )
+            _finalize_agent_result(
+                result,
+                submitted,
+                solution_path,
+                input_tokens,
+                output_tokens,
+                turns_used,
+                model_config,
+                sandbox,
+                backend,
+                gpu,
+                level,
+            )
+            result.elapsed_seconds = time.time() - start_time
+            return result
+
+        if model_config.reasoning_mode or force_reasoning:
+            reasoning_prompt = backend.get_reasoning_prompt(gpu_name, vram)
+            reasoning_prompt = augment_system_prompt(reasoning_prompt, backend=backend.name)
+            reasoning_prompt = inject_workspace_context(reasoning_prompt, context_bundle)
+
+            submitted, solution_path, turns_used, input_tokens, output_tokens = _run_reasoning_agent(
+                model_config, sandbox, reasoning_prompt, initial_user_message, max_turns
+            )
+            _finalize_agent_result(
+                result,
+                submitted,
+                solution_path,
+                input_tokens,
+                output_tokens,
+                turns_used,
+                model_config,
+                sandbox,
+                backend,
+                gpu,
+                level,
+            )
+            result.elapsed_seconds = time.time() - start_time
+            return result
+
+        client = get_provider_client(model_config.provider)
+        messages: list = []
+
+        if model_config.provider == "anthropic":
+            messages = [{"role": "user", "content": initial_user_message}]
+        else:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": initial_user_message},
+            ]
+
+        submitted = False
+        solution_path = None
+        total_input_tokens = 0
+        total_output_tokens = 0
+        total_cache_creation_tokens = 0
+        total_cache_read_tokens = 0
+
+        for turn in range(max_turns):
+            result.turns = turn + 1
+            print(f"\n[Turn {turn + 1}/{max_turns}]", flush=True)
+
+            try:
+                response = _get_model_response(client, model_config, system_prompt, messages)
+            except Exception as e:
+                print(f"API error: {e}", flush=True)
+                result.error = f"API error: {e}"
+                break
+
+            input_toks, output_toks, cache_create, cache_read = _extract_token_usage(response, model_config)
+            total_input_tokens += input_toks
+            total_output_tokens += output_toks
+            total_cache_creation_tokens += cache_create
+            total_cache_read_tokens += cache_read
+
+            assistant_content, tool_calls = _parse_response(response, model_config)
+
+            if isinstance(assistant_content, str) and assistant_content:
+                text = assistant_content[:200] + "..." if len(assistant_content) > 200 else assistant_content
+                print(f"Assistant: {text}", flush=True)
+            turn_payload = {
+                "assistant_content": assistant_content,
+                "tool_calls": tool_calls,
+            }
+            _write_turn_artifact(turn + 1, "response.txt", json.dumps(turn_payload, indent=2, default=str))
+
+            messages.append(_format_assistant_message(assistant_content, tool_calls, model_config))
+
+            if not tool_calls:
+                print("No tool calls - agent finished", flush=True)
+                break
+
+            tool_results = []
+            turn_tool_logs: List[str] = []
+            for tc in tool_calls:
+                tool_name = tc["name"]
+                tool_input = tc["input"]
+                tool_id = tc.get("id", f"tool_{turn}")
+
+                print(f"  Tool: {tool_name}", flush=True)
+
+                if tool_name == "bash":
+                    cmd = tool_input.get("command", "")
+                    print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
+                    cmd_result = sandbox.run_command(cmd)
+                    output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
+                    turn_tool_logs.append(_format_command_result(cmd, cmd_result))
+                    if cmd_result["stdout"]:
+                        out = (
+                            cmd_result["stdout"][:150] + "..."
+                            if len(cmd_result["stdout"]) > 150
+                            else cmd_result["stdout"]
+                        )
+                        print(f"    -> {out}", flush=True)
+                    tool_results.append({"id": tool_id, "name": tool_name, "content": output})
+
+                elif tool_name == "submit":
+                    solution_path = tool_input.get("solution_path", "solution.py")
+                    submitted = True
+                    result.submitted = True
+                    print(f"  SUBMITTED: {solution_path}", flush=True)
+                    tool_results.append({"id": tool_id, "name": tool_name, "content": f"Submitted: {solution_path}"})
+
+            _write_turn_artifact(turn + 1, "compile.log", "\n\n".join(turn_tool_logs))
+            if sandbox.file_exists("solution.py"):
+                sol_snapshot = sandbox.read_file("solution.py") or ""
+                _write_turn_artifact(turn + 1, "solution.py", sol_snapshot)
+
+            messages.extend(_format_tool_results(tool_results, model_config))
+
+            if submitted:
+                break
+
+        submitted, solution_path = _auto_submit_if_compilable(sandbox, submitted, solution_path)
+        result.submitted = submitted
+
+        _finalize_agent_result(
+            result,
+            submitted,
+            solution_path,
+            total_input_tokens,
+            total_output_tokens,
+            result.turns,
+            model_config,
+            sandbox,
+            backend,
+            gpu,
+            level,
+            total_cache_creation_tokens,
+            total_cache_read_tokens,
+        )
+
+    except TimeoutError:
+        result.error = "timeout_exceeded"
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        result.error = str(e)
+
+    finally:
+        _clear_problem_alarm(alarm_handler)
+        sandbox.stop()
+
+    result.elapsed_seconds = time.time() - start_time
+    return result

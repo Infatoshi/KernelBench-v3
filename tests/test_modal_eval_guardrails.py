@@ -1,4 +1,4 @@
-import modal_eval
+from src.eval.guardrails import validate_solution
 
 
 def test_validate_solution_guardrails_allows_custom_kernel_path() -> None:
@@ -23,7 +23,7 @@ class Model(nn.Module):
     def forward(self, x):
         return x
 """
-    assert modal_eval.validate_solution_guardrails(solution) is None
+    assert validate_solution(solution) is None
 
 
 def test_validate_solution_guardrails_rejects_python_torch_matmul() -> None:
@@ -33,7 +33,7 @@ class Model:
     def forward(self, a, b):
         return torch.matmul(a, b)
 """
-    error = modal_eval.validate_solution_guardrails(solution)
+    error = validate_solution(solution)
     assert error is not None
     assert "Forbidden Python fallback" in error
 
@@ -46,7 +46,7 @@ torch::Tensor my_op(torch::Tensor a, torch::Tensor b) {
 }
 '''
 """
-    error = modal_eval.validate_solution_guardrails(solution)
+    error = validate_solution(solution)
     assert error is not None
     assert "Forbidden C++ wrapper fallback" in error
 
@@ -58,7 +58,7 @@ class Model:
     def forward(self, x):
         return torch.compile(lambda y: y)(x)
 """
-    error = modal_eval.validate_solution_guardrails(solution)
+    error = validate_solution(solution)
     assert error is not None
     assert "torch.compile" in error
 
@@ -72,7 +72,7 @@ class Model(nn.Module):
     def forward(self, x):
         return x
 """
-    error = modal_eval.validate_solution_guardrails(solution, backend="graphics")
+    error = validate_solution(solution, backend="graphics")
     assert error is not None
     assert "Missing Triton import" in error
 
@@ -91,6 +91,6 @@ class Model:
     def forward(self, *args):
         return reference.Model()(*args)
 """
-    error = modal_eval.validate_solution_guardrails(solution, backend="graphics")
+    error = validate_solution(solution, backend="graphics")
     assert error is not None
     assert "Forbidden direct fallback to reference model" in error

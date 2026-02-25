@@ -1,6 +1,26 @@
 """System prompts for MLX Metal kernel generation."""
 
 
+def _tool_section(use_xml_tools: bool) -> str:
+    if use_xml_tools:
+        return """
+
+TOOLS (XML format):
+<tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
+<tool_call><write_file><path>/workspace/solution.py</path><content>YOUR CODE</content></write_file></tool_call>
+<tool_call><edit_file><path>/workspace/solution.py</path><old_str>OLD</old_str><new_str>NEW</new_str></edit_file></tool_call>
+<tool_call><bash><command>YOUR_COMMAND</command></bash></tool_call>
+<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
+    return """
+
+TOOLS:
+- read_file(path): Read file contents. Optional: offset, limit.
+- write_file(path, content): Create or overwrite a file.
+- edit_file(path, old_str, new_str): Replace a unique string in a file.
+- bash(command): Execute shell commands for compilation and testing.
+- submit(solution_path): Submit solution.py for benchmarking."""
+
+
 def get_metal_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) -> str:
     """Generate tool-use system prompt for Metal solutions via MLX."""
 
@@ -9,28 +29,21 @@ def get_metal_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = F
 YOUR TASK: Optimize the task from reference.py using MLX custom Metal kernels.
 
 REQUIREMENTS:
-1. Use MLX (`import mlx.core as mx`) and Metal kernels via `mx.fast.metal_kernel`
-2. Do NOT use PyTorch, CUDA, or Triton
+1. Use MLX (`import mlx.core as mx`) and Metal kernels via `mx.fast.metal_kernel` when helpful
+2. Do NOT use PyTorch, CUDA, or Triton in `solution.py`
 3. Return MLX arrays (`mx.array`) only
-4. Provide a callable `solution(a, b)` that returns the result array
-5. Keep correctness first: output must match `mx.matmul(a, b)` within tolerance
+4. Provide a callable `solution(*inputs)` matching `reference.get_inputs()` arity
+5. Keep correctness first: output must match the reference model output within tolerance
 
 BENCHMARK INTERFACE (required):
-- `def solution(a, b):` where `a` and `b` are 2D `mx.array`
-- Return one `mx.array` output with matmul-equivalent values
-
-WORKFLOW:
-1. Use bash tool: `cat /workspace/reference.py`
-2. Use bash tool to write `/workspace/solution.py`
-3. Use bash tool:
-   `python -c "import mlx.core as mx, solution; a=mx.random.normal((128,128), dtype=mx.float32); b=mx.random.normal((128,128), dtype=mx.float32); y=solution.solution(a,b); mx.eval(y); print(y.shape)"`
-4. Use submit tool with path `solution.py`
+- `def solution(*inputs):`
+- Inputs are MLX-converted equivalents of tensors/scalars from `reference.get_inputs()`
+- Return one output array (or list/tuple with first element as output)
 
 IMPORTANT:
 - A correct and compilable solution is better than an invalid advanced kernel.
 - If custom kernel code is unstable, use a safe fallback that still returns correct MLX output.
 - No placeholder code.
-- After the validation command succeeds, immediately call the submit tool and stop.
 
 Preferred structure:
 ```python
@@ -54,33 +67,15 @@ def _build_kernel():
     )
 
 
-def solution(a, b):
-    # For matmul tasks, either implement a correct custom kernel path
-    # or safely fallback to mx.matmul(a, b)
-    return mx.matmul(a, b)
+def solution(*inputs):
+    # Read reference.py and implement the equivalent operation using MLX.
+    # inputs are MLX arrays matching reference.get_inputs() arity and types.
+    raise NotImplementedError("Replace with MLX implementation matching reference.Model.forward")
 ```
 """
 
-    if use_xml_tools:
-        xml_tools = """
-
-TOOLS - Use XML format to call tools:
-
-1. bash:
-<tool_call><bash><command>YOUR_COMMAND_HERE</command></bash></tool_call>
-
-2. submit:
-<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>
-"""
-        return base_prompt + xml_tools
-
-    native_tools = """
-
-TOOLS:
-- bash: Execute shell commands
-- submit: Submit your solution path
-"""
-    return base_prompt + native_tools
+    tools = _tool_section(use_xml_tools)
+    return base_prompt + tools
 
 
 def get_metal_reasoning_system_prompt(gpu_name: str, vram_gb: int) -> str:
@@ -96,8 +91,8 @@ Requirements:
 - Use `import mlx.core as mx`
 - Prefer custom Metal kernels via `mx.fast.metal_kernel`
 - Do NOT use PyTorch, CUDA, or Triton
-- Expose `def solution(a, b)` returning one `mx.array`
-- Correctness is mandatory: match `mx.matmul(a, b)`
+- Expose `def solution(*inputs)` returning one `mx.array`
+- Match the reference problem contract from `reference.get_inputs()` and `reference.Model.forward`
 
 Return only complete Python code in a markdown code block.
 If custom kernel code is unstable, provide a correct fallback with MLX ops."""

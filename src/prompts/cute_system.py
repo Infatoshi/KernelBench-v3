@@ -1,6 +1,26 @@
 """System prompts for CuTe kernel generation."""
 
 
+def _tool_section(use_xml_tools: bool) -> str:
+    if use_xml_tools:
+        return """
+
+TOOLS (XML format):
+<tool_call><read_file><path>/workspace/reference.py</path></read_file></tool_call>
+<tool_call><write_file><path>/workspace/solution.py</path><content>YOUR CODE</content></write_file></tool_call>
+<tool_call><edit_file><path>/workspace/solution.py</path><old_str>OLD</old_str><new_str>NEW</new_str></edit_file></tool_call>
+<tool_call><bash><command>YOUR_COMMAND</command></bash></tool_call>
+<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
+    return """
+
+TOOLS:
+- read_file(path): Read file contents. Optional: offset, limit.
+- write_file(path, content): Create or overwrite a file.
+- edit_file(path, old_str, new_str): Replace a unique string in a file.
+- bash(command): Execute shell commands for compilation and testing.
+- submit(solution_path): Submit solution.py for benchmarking."""
+
+
 def get_cute_system_prompt(gpu_name: str, vram_gb: int, use_xml_tools: bool = False) -> str:
     """Generate tool-use system prompt for CuTe-based solutions."""
 
@@ -45,24 +65,11 @@ Do NOT use:
 - `import torch.utils.cpp_extension` then `torch.utils.cpp_extension.load_inline()`
 - `from torch.utils import cpp_extension` then `cpp_extension.load_inline()`
 
-CRITICAL SIGNATURE REQUIREMENT:
-Your solution function MUST have this exact signature:
-
-```python
-def solution(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
-    # A is shape (M, K)
-    # B is shape (K, N)
-    # Return C of shape (M, N)
-    ...
-    return C
-```
-
-Do NOT use signatures like:
-- `gemm_cute(A, B, C)`  # Wrong: C should be created inside
-- `solution(A, B, C)`   # Wrong: only 2 inputs allowed
-
-Model contract:
-- `Model.forward(self, A, B)` must call `solution(A, B)` and return only `C`.
+INTERFACE CONTRACT:
+- `Model(nn.Module)` must accept `*get_init_inputs()` in `__init__`.
+- `Model.forward(self, *args)` must accept `*get_inputs()` and match reference arity.
+- Read `reference.py` to determine the exact input/output signature.
+- Output should be allocated inside `forward`, not passed as an argument.
 
 DO NOT USE:
 - Raw CUDA-only final loops as the main implementation
@@ -70,16 +77,8 @@ DO NOT USE:
 - Triton
 - Python imports like `import cute` (usually unavailable at runtime)
 
-REQUIRED WORKFLOW:
-1. `cat /workspace/reference.py`
-2. Write `/workspace/solution.py`
-3. Compile check:
-   `python -c "from solution import Model; print('OK')"`
-4. Submit with `solution.py`
-
 IMPORTANT:
 - Correct and compilable code first.
-- After compile check prints `OK`, submit immediately.
 - DO NOT implement fallback paths. If CuTe headers fail to include, your solution should fail to compile.
 - DO NOT use `#ifdef CUTE_AVAILABLE` or any basic-CUDA fallback branch.
 
@@ -185,38 +184,18 @@ ext = load_inline(
     verbose=False
 )
 
-def solution(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
-    return ext.gemm_cute(A.contiguous(), B.contiguous())
-
 class Model(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, A, B):
-        return solution(A, B)
+    def forward(self, *args):
+        # Match reference.py forward signature and call CuTe extension
+        return ext.cute_op(*[a.contiguous() for a in args])
 ```
 """
 
-    if use_xml_tools:
-        xml_tools = """
-
-TOOLS - Use XML format to call tools:
-
-1. bash:
-<tool_call><bash><command>YOUR_COMMAND_HERE</command></bash></tool_call>
-
-2. submit:
-<tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>
-"""
-        return header + body + xml_tools
-
-    native_tools = """
-
-TOOLS:
-- bash: Execute shell commands
-- submit: Submit your solution path
-"""
-    return header + body + native_tools
+    tools = _tool_section(use_xml_tools)
+    return header + body + tools
 
 
 def get_cute_reasoning_system_prompt(gpu_name: str, vram_gb: int) -> str:
@@ -252,16 +231,10 @@ Hard requirements:
   - `mma.get_slice(threadIdx.x)` / `partition_A` / `partition_B` / `partition_C`
   - launch with `dim3 dimBlock(size(mmaC))`, not arbitrary `16x16`.
 
-Mandatory signature in Python:
-```python
-def solution(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
-    ...
-    return C
-```
-
-Avoid:
-- `solution(A, B, C)`
-- `gemm_cute(A, B, C)` as the public API
+Interface contract:
+- Keep `Model`, `get_inputs`, `get_init_inputs` compatible with reference.py.
+- Read the reference to determine exact forward signature and arity.
+- Output should be allocated inside the function, not passed as an argument.
 
 Return only complete Python code in a markdown code block.
 Start from a compilable baseline and only then tune.
