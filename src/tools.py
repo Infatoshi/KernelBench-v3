@@ -1,14 +1,10 @@
 """Tool schemas (Anthropic/OpenAI/Gemini) and tool dispatch logic."""
 
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 
 def _dispatch_tool(tool_name: str, tool_input: dict, sandbox) -> str:
-    """Execute a tool call and return the output string.
-
-    Handles: read_file, write_file, edit_file, bash, submit.
-    Returns output text; caller is responsible for logging and message formatting.
-    """
+    """Execute a tool call and return the output string."""
     if tool_name == "read_file":
         path = tool_input.get("path", "")
         content = sandbox.read_file(path)
@@ -88,7 +84,7 @@ _BASH_PROPS: Dict[str, Any] = {
     "command": {"type": "string", "description": "The shell command to execute"},
     "timeout": {"type": "integer", "description": "Timeout in seconds. Optional."},
 }
-_SUBMIT_DESC = "Submit your solution for benchmarking. Call this when your solution compiles and passes self-checks."
+_SUBMIT_DESC = "Submit your solution for benchmarking. Call this when your solution compiles and passes correctness checks."
 _SUBMIT_PROPS: Dict[str, Any] = {
     "solution_path": {"type": "string", "description": "Path to solution file (default: solution.py)"},
 }
@@ -111,7 +107,6 @@ TOOLS_OPENAI: List[Dict[str, Any]] = [
 
 
 def build_gemini_tools():
-    """Build Gemini FunctionDeclaration tool objects. Import lazily to avoid hard dep."""
     from google.generativeai.types import FunctionDeclaration, Tool
 
     decls = [

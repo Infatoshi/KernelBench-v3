@@ -58,20 +58,17 @@ class Model(nn.Module):
         assert K % group_size == 0, "K must be divisible by group_size"
         assert K % 2 == 0, "K must be even for INT4 packing"
 
-        # Packed INT4 weights: 2 weights per byte, stored as uint8
-        # Shape: (N, K//2) - each byte holds 2 INT4 values
-        # Packing: byte = (high_nibble << 4) | low_nibble
+        rng_state = torch.random.get_rng_state()
+        torch.manual_seed(1337)
         self.register_buffer(
             "weight_packed",
             torch.randint(0, 256, (N, K // 2), dtype=torch.uint8)
         )
-
-        # Per-group scales: (N, num_groups) in FP16
-        # Scale maps the INT4 range to the original weight range
         self.register_buffer(
             "scales",
             torch.randn(N, self.num_groups, dtype=torch.float16).abs() * 0.1
         )
+        torch.random.set_rng_state(rng_state)
 
     def unpack_int4(self, packed: torch.Tensor) -> torch.Tensor:
         """

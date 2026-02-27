@@ -23,21 +23,13 @@ from src.eval.context import (
     prepare_workspace_context,
     seed_workspace_context,
 )
+from src.eval.fingerprint import get_fingerprint
 from src.eval.results import EvalResult, apply_benchmark_metrics, attach_solution_metadata
+from src.hardware import HardwareTarget
 from src.models import ModelConfig, get_provider_client
 from src.parsing import extract_python_code
-
-GPU_SPECS = {
-    "L40S": ("L40S", 48),
-    "A100": ("A100", 40),
-    "H100": ("H100", 80),
-    "B200": ("B200", 192),
-    "RTX3090": ("RTX 3090", 24),
-    "LOCAL": ("Local CUDA GPU", 24),
-    "M4MAX": ("M4 Max", 128),
-}
-
-LOCAL_GPUS = {"RTX3090", "LOCAL", "M4MAX"}
+from src.prompts import get_reasoning_prompt, get_system_prompt
+from src.tools import _dispatch_tool, build_gemini_tools
 
 MAX_PROBLEM_TIME_SECONDS = {1: 300, 2: 600, 3: 900, 4: 1200}
 
@@ -131,33 +123,8 @@ def _run_gemini_agent(
     max_turns: int,
 ) -> tuple:
     import google.generativeai as genai
-    from google.generativeai.types import FunctionDeclaration, Tool
 
-    bash_func = FunctionDeclaration(
-        name="bash",
-        description="Execute a shell command in the sandbox",
-        parameters={
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "The shell command to execute"}
-            },
-            "required": ["command"],
-        },
-    )
-
-    submit_func = FunctionDeclaration(
-        name="submit",
-        description="Submit your optimized solution for benchmarking",
-        parameters={
-            "type": "object",
-            "properties": {
-                "solution_path": {"type": "string", "description": "Path to the solution file"}
-            },
-            "required": ["solution_path"],
-        },
-    )
-
-    tools = Tool(function_declarations=[bash_func, submit_func])
+    tools = build_gemini_tools()
 
     model = genai.GenerativeModel(
         model_config.model_id,
@@ -232,6 +199,17 @@ def _run_gemini_agent(
                     genai.protos.Part(
                         function_response=genai.protos.FunctionResponse(
                             name=tool_name, response={"result": f"Submitted: {solution_path}"}
+                        )
+                    )
+                )
+
+            else:
+                output = _dispatch_tool(tool_name, tool_args, sandbox)
+                print(f"    -> {output[:150]}..." if len(output) > 150 else f"    -> {output}", flush=True)
+                function_responses.append(
+                    genai.protos.Part(
+                        function_response=genai.protos.FunctionResponse(
+                            name=tool_name, response={"result": output}
                         )
                     )
                 )
@@ -349,15 +327,6 @@ def _run_reasoning_agent(
     return submitted, solution_path, turns_used, total_input_tokens, total_output_tokens
 
 
-def _create_default_sandbox(gpu: str, problem_code: str, local_gpus: set):
-    from src.agent.local_sandbox import LocalSandbox, LocalSandboxConfig
-    from src.agent.modal_sandbox import ModalSandbox, ModalSandboxConfig
-
-    if gpu in local_gpus:
-        return LocalSandbox(problem_code, LocalSandboxConfig(timeout=300))
-    return ModalSandbox(problem_code, ModalSandboxConfig(gpu=gpu, timeout=300, sandbox_timeout=3600))
-
-
 def _finalize_agent_result(
     result: EvalResult,
     submitted: bool,
@@ -367,8 +336,7 @@ def _finalize_agent_result(
     turns_used: int,
     model_config: ModelConfig,
     sandbox,
-    backend,
-    gpu: str,
+    hardware_target: HardwareTarget,
     level: int,
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
@@ -399,39 +367,33 @@ def _finalize_agent_result(
     if result.estimated_cost_usd:
         print(f"[Est. Cost] ${result.estimated_cost_usd:.4f}", flush=True)
 
+    result.hardware_fingerprint = get_fingerprint(hardware_target, sandbox)
+
     if submitted and solution_path:
         print("\n" + "=" * 60, flush=True)
         print("RUNNING BENCHMARK", flush=True)
         print("=" * 60, flush=True)
 
         attach_solution_metadata(result, solution_path, sandbox)
-        benchmark_result = backend.run_benchmark(
+
+        from src.eval.benchmark import run_benchmark
+
+        benchmark_result = run_benchmark(
             sandbox,
             solution_path,
-            hardware=gpu,
+            hardware=hardware_target.gpu_sku,
             level=level,
+            is_metal=hardware_target.is_metal,
         )
         if benchmark_result is not None:
             apply_benchmark_metrics(result, benchmark_result)
-        else:
-            from modal_eval import _run_benchmark
-
-            legacy_result = _run_benchmark(
-                sandbox,
-                solution_path,
-                hardware=gpu,
-                level=level,
-                backend=backend.name,
-            )
-            apply_benchmark_metrics(result, legacy_result)
     else:
         result.error = "No solution submitted"
 
 
 def run_eval(
-    backend,
+    hardware_target: HardwareTarget,
     model_config: ModelConfig,
-    gpu: str,
     problem_code: str,
     problem_name: str,
     level: int,
@@ -439,28 +401,25 @@ def run_eval(
 ) -> EvalResult:
     result = EvalResult(
         model=model_config.name,
-        gpu=gpu,
+        gpu=hardware_target.gpu_sku,
         problem=problem_name,
         level=level,
     )
 
     start_time = time.time()
 
-    gpu_specs = getattr(backend, "gpu_specs", GPU_SPECS)
-    gpu_name, vram = gpu_specs.get(gpu, ("Unknown", 80))
+    gpu_name = hardware_target.display_name
+    vram = hardware_target.vram_gb
 
-    force_reasoning = getattr(backend, "force_reasoning_mode", False)
-
-    system_prompt = backend.get_system_prompt(gpu_name, vram, use_xml_tools=model_config.use_xml_tools)
-    system_prompt = augment_system_prompt(system_prompt, backend=backend.name)
+    system_prompt = get_system_prompt(
+        hardware_name=hardware_target.name, gpu_name=gpu_name, vram_gb=vram,
+        is_metal=hardware_target.is_metal, use_xml_tools=model_config.use_xml_tools,
+    )
+    system_prompt = augment_system_prompt(system_prompt, is_metal=hardware_target.is_metal)
 
     reference_metadata = extract_reference_metadata(problem_code)
 
-    local_gpus = getattr(backend, "local_gpus", LOCAL_GPUS)
-    if hasattr(backend, "create_sandbox"):
-        sandbox = backend.create_sandbox(gpu, problem_code)
-    else:
-        sandbox = _create_default_sandbox(gpu, problem_code, local_gpus)
+    sandbox = hardware_target.create_sandbox(problem_code)
 
     alarm_handler = _begin_problem_alarm(level)
     try:
@@ -468,20 +427,20 @@ def run_eval(
         print(f"Sandbox started: {sandbox.get_gpu_info()}", flush=True)
 
         context_bundle = prepare_workspace_context(
-            backend=backend.name,
+            hardware_name=hardware_target.name,
             gpu_name=gpu_name,
             vram_gb=vram,
             level=level,
             problem_name=problem_name,
             metadata=reference_metadata,
             sandbox=sandbox,
-            backend_obj=backend,
+            is_metal=hardware_target.is_metal,
         )
         seed_workspace_context(sandbox=sandbox, context_bundle=context_bundle)
         system_prompt = inject_workspace_context(system_prompt, context_bundle)
 
         initial_user_message = build_initial_user_message(
-            backend=backend.name,
+            hardware_name=hardware_target.name,
             problem_name=problem_name,
             level=level,
             gpu_name=gpu_name,
@@ -503,16 +462,18 @@ def run_eval(
                 turns_used,
                 model_config,
                 sandbox,
-                backend,
-                gpu,
+                hardware_target,
                 level,
             )
             result.elapsed_seconds = time.time() - start_time
             return result
 
-        if model_config.reasoning_mode or force_reasoning:
-            reasoning_prompt = backend.get_reasoning_prompt(gpu_name, vram)
-            reasoning_prompt = augment_system_prompt(reasoning_prompt, backend=backend.name)
+        if model_config.reasoning_mode:
+            reasoning_prompt = get_reasoning_prompt(
+                hardware_name=hardware_target.name, gpu_name=gpu_name, vram_gb=vram,
+                is_metal=hardware_target.is_metal,
+            )
+            reasoning_prompt = augment_system_prompt(reasoning_prompt, is_metal=hardware_target.is_metal)
             reasoning_prompt = inject_workspace_context(reasoning_prompt, context_bundle)
 
             submitted, solution_path, turns_used, input_tokens, output_tokens = _run_reasoning_agent(
@@ -527,8 +488,7 @@ def run_eval(
                 turns_used,
                 model_config,
                 sandbox,
-                backend,
-                gpu,
+                hardware_target,
                 level,
             )
             result.elapsed_seconds = time.time() - start_time
@@ -617,6 +577,11 @@ def run_eval(
                     print(f"  SUBMITTED: {solution_path}", flush=True)
                     tool_results.append({"id": tool_id, "name": tool_name, "content": f"Submitted: {solution_path}"})
 
+                else:
+                    output = _dispatch_tool(tool_name, tool_input, sandbox)
+                    print(f"    -> {output[:150]}..." if len(output) > 150 else f"    -> {output}", flush=True)
+                    tool_results.append({"id": tool_id, "name": tool_name, "content": output})
+
             _write_turn_artifact(turn + 1, "compile.log", "\n\n".join(turn_tool_logs))
             if sandbox.file_exists("solution.py"):
                 sol_snapshot = sandbox.read_file("solution.py") or ""
@@ -639,8 +604,7 @@ def run_eval(
             result.turns,
             model_config,
             sandbox,
-            backend,
-            gpu,
+            hardware_target,
             level,
             total_cache_creation_tokens,
             total_cache_read_tokens,

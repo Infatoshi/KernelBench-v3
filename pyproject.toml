@@ -69,5 +69,9 @@ include = [
 [dependency-groups]
 default = []
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["docs/refs", ".venv", "problems", "outputs", "tools"]
+
 [tool.uv]
 default-groups = ["default"]

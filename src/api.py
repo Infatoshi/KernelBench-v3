@@ -3,42 +3,30 @@
 import json
 from typing import Optional, Tuple
 
-from src.models import ModelConfig, MODEL_TO_OPENROUTER, get_openrouter_pricing
+from src.models import ModelConfig, get_openrouter_pricing
 from src.parsing import parse_xml_tool_calls
 from src.tools import TOOLS_ANTHROPIC, TOOLS_OPENAI
 
 
 def _extract_token_usage(response, model_config: ModelConfig) -> tuple:
-    """Extract token counts from API response.
-
-    Returns: (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)
-    """
-    input_tokens = 0
-    output_tokens = 0
-    cache_creation_tokens = 0
-    cache_read_tokens = 0
+    """Returns: (input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens)"""
+    input_tokens = output_tokens = cache_creation_tokens = cache_read_tokens = 0
 
     if model_config.provider == "anthropic":
-        if hasattr(response, 'usage') and response.usage:
-            input_tokens = getattr(response.usage, 'input_tokens', 0)
-            output_tokens = getattr(response.usage, 'output_tokens', 0)
-            cache_creation_tokens = getattr(response.usage, 'cache_creation_input_tokens', 0)
-            cache_read_tokens = getattr(response.usage, 'cache_read_input_tokens', 0)
+        if hasattr(response, "usage") and response.usage:
+            input_tokens = getattr(response.usage, "input_tokens", 0)
+            output_tokens = getattr(response.usage, "output_tokens", 0)
+            cache_creation_tokens = getattr(response.usage, "cache_creation_input_tokens", 0)
+            cache_read_tokens = getattr(response.usage, "cache_read_input_tokens", 0)
     else:
-        if hasattr(response, 'usage') and response.usage:
-            input_tokens = getattr(response.usage, 'prompt_tokens', 0)
-            output_tokens = getattr(response.usage, 'completion_tokens', 0)
-            details = getattr(response.usage, 'prompt_tokens_details', None)
+        if hasattr(response, "usage") and response.usage:
+            input_tokens = getattr(response.usage, "prompt_tokens", 0)
+            output_tokens = getattr(response.usage, "completion_tokens", 0)
+            details = getattr(response.usage, "prompt_tokens_details", None)
             if details:
-                cache_read_tokens = getattr(details, 'cached_tokens', 0)
+                cache_read_tokens = getattr(details, "cached_tokens", 0)
 
     return input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
-
-
-def _get_pricing(model_id: str, provider: str) -> Optional[Tuple[float, float]]:
-    """Get pricing for a model (input, output per million tokens)."""
-    openrouter_id = MODEL_TO_OPENROUTER.get(model_id, model_id)
-    return get_openrouter_pricing(openrouter_id)
 
 
 def _estimate_cost(
@@ -47,10 +35,9 @@ def _estimate_cost(
     input_tokens: int,
     output_tokens: int,
     cache_creation_tokens: int = 0,
-    cache_read_tokens: int = 0
+    cache_read_tokens: int = 0,
 ) -> Optional[float]:
-    """Estimate cost in USD based on model pricing."""
-    pricing = _get_pricing(model_id, provider)
+    pricing = get_openrouter_pricing(model_id)
     if pricing is None:
         return None
 
@@ -60,12 +47,10 @@ def _estimate_cost(
     cache_creation_cost = cache_creation_tokens * (input_price * 1.25) / 1_000_000
     cache_read_cost = cache_read_tokens * (input_price * 0.10) / 1_000_000
 
-    cost = base_input_cost + output_cost + cache_creation_cost + cache_read_cost
-    return round(cost, 6)
+    return round(base_input_cost + output_cost + cache_creation_cost + cache_read_cost, 6)
 
 
 def _get_model_response(client, model_config: ModelConfig, system_prompt: str, messages: list):
-    """Get response from model via appropriate provider API."""
     if model_config.provider == "anthropic":
         system_with_cache = [
             {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
@@ -74,7 +59,7 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
             "model": model_config.model_id,
             "max_tokens": 8192,
             "system": system_with_cache,
-            "messages": messages
+            "messages": messages,
         }
         if not model_config.use_xml_tools:
             kwargs["tools"] = TOOLS_ANTHROPIC
@@ -84,7 +69,7 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
         kwargs = {
             "model": model_config.model_id,
             "max_completion_tokens": 8192,
-            "messages": messages
+            "messages": messages,
         }
         if not model_config.use_xml_tools:
             kwargs["tools"] = TOOLS_OPENAI
@@ -99,7 +84,7 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
                         "role": "system",
                         "content": [
                             {"type": "text", "text": msg["content"], "cache_control": {"type": "ephemeral"}}
-                        ]
+                        ],
                     })
                 else:
                     cached_messages.append(msg)
@@ -111,8 +96,7 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
         return client.chat.completions.create(**kwargs)
 
 
-def _parse_response(response, model_config: ModelConfig) -> tuple:
-    """Parse response into (content, tool_calls)."""
+def _parse_response(response, model_config: ModelConfig) -> Tuple:
     if model_config.provider == "anthropic":
         content = ""
         tool_calls = []
@@ -134,7 +118,7 @@ def _parse_response(response, model_config: ModelConfig) -> tuple:
                 tool_calls.append({
                     "id": tc.id,
                     "name": tc.function.name,
-                    "input": json.loads(tc.function.arguments)
+                    "input": json.loads(tc.function.arguments),
                 })
         if model_config.use_xml_tools and not tool_calls and content:
             tool_calls = parse_xml_tool_calls(content)
@@ -142,7 +126,6 @@ def _parse_response(response, model_config: ModelConfig) -> tuple:
 
 
 def _format_assistant_message(content, tool_calls, model_config: ModelConfig) -> dict:
-    """Format assistant message for conversation history."""
     if model_config.use_xml_tools:
         return {"role": "assistant", "content": content or ""}
 
@@ -154,24 +137,22 @@ def _format_assistant_message(content, tool_calls, model_config: ModelConfig) ->
             blocks.append({"type": "tool_use", "id": tc["id"], "name": tc["name"], "input": tc["input"]})
         return {"role": "assistant", "content": blocks}
 
-    else:
-        msg: dict = {"role": "assistant"}
-        if content:
-            msg["content"] = content
-        if tool_calls:
-            msg["tool_calls"] = [
-                {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": json.dumps(tc["input"])}}
-                for tc in tool_calls
-            ]
-        return msg
+    msg: dict = {"role": "assistant"}
+    if content:
+        msg["content"] = content
+    if tool_calls:
+        msg["tool_calls"] = [
+            {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": json.dumps(tc["input"])}}
+            for tc in tool_calls
+        ]
+    return msg
 
 
 def _format_tool_results(tool_results: list, model_config: ModelConfig) -> list:
-    """Format tool results for conversation history."""
     if model_config.use_xml_tools:
         result_text = ""
         for tr in tool_results:
-            result_text += f"<tool_result name=\"{tr['name']}\">\n{tr['content']}\n</tool_result>\n\n"
+            result_text += f'<tool_result name="{tr["name"]}">\n{tr["content"]}\n</tool_result>\n\n'
         return [{"role": "user", "content": result_text.strip()}]
 
     if model_config.provider == "anthropic":
@@ -180,11 +161,10 @@ def _format_tool_results(tool_results: list, model_config: ModelConfig) -> list:
             "content": [
                 {"type": "tool_result", "tool_use_id": tr["id"], "content": tr["content"]}
                 for tr in tool_results
-            ]
+            ],
         }]
 
-    else:
-        return [
-            {"role": "tool", "tool_call_id": tr["id"], "content": tr["content"]}
-            for tr in tool_results
-        ]
+    return [
+        {"role": "tool", "tool_call_id": tr["id"], "content": tr["content"]}
+        for tr in tool_results
+    ]

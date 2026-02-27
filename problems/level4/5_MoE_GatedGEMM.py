@@ -51,8 +51,8 @@ class Model(nn.Module):
         self.intermediate_size = intermediate_size
         self.num_experts = num_experts
 
-        # Expert weights: each expert has gate_proj, up_proj, down_proj
-        # Shape: (num_experts, out_features, in_features) for batched matmul
+        rng_state = torch.random.get_rng_state()
+        torch.manual_seed(1337)
         self.gate_proj = nn.Parameter(
             torch.randn(num_experts, intermediate_size, hidden_size) * 0.02
         )
@@ -62,6 +62,7 @@ class Model(nn.Module):
         self.down_proj = nn.Parameter(
             torch.randn(num_experts, hidden_size, intermediate_size) * 0.02
         )
+        torch.random.set_rng_state(rng_state)
 
     def forward(
         self,

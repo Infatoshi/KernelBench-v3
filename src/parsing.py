@@ -1,17 +1,15 @@
 """XML tool call parsing and Python code extraction from model responses."""
 
 import re
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 
 def unescape_html(text: str) -> str:
-    """Unescape HTML entities that models sometimes output."""
     import html
     return html.unescape(text)
 
 
 def _parse_xml_tool(match: str, tool_calls: list) -> bool:
-    """Try to parse a single XML tool call block. Returns True if matched."""
     rf_match = re.search(r'<read_file[^>]*>\s*<path>(.*?)</path>', match, re.DOTALL)
     if rf_match:
         inp: Dict[str, Any] = {"path": unescape_html(rf_match.group(1).strip())}
@@ -28,7 +26,7 @@ def _parse_xml_tool(match: str, tool_calls: list) -> bool:
     if wf_match:
         tool_calls.append({
             "id": f"xml_write_file_{len(tool_calls)}", "name": "write_file",
-            "input": {"path": unescape_html(wf_match.group(1).strip()), "content": unescape_html(wf_match.group(2))}
+            "input": {"path": unescape_html(wf_match.group(1).strip()), "content": unescape_html(wf_match.group(2))},
         })
         return True
 
@@ -40,7 +38,7 @@ def _parse_xml_tool(match: str, tool_calls: list) -> bool:
                 "path": unescape_html(ef_match.group(1).strip()),
                 "old_str": unescape_html(ef_match.group(2)),
                 "new_str": unescape_html(ef_match.group(3)),
-            }
+            },
         })
         return True
 
@@ -48,7 +46,7 @@ def _parse_xml_tool(match: str, tool_calls: list) -> bool:
     if bash_match:
         tool_calls.append({
             "id": f"xml_bash_{len(tool_calls)}", "name": "bash",
-            "input": {"command": unescape_html(bash_match.group(1).strip())}
+            "input": {"command": unescape_html(bash_match.group(1).strip())},
         })
         return True
 
@@ -56,7 +54,7 @@ def _parse_xml_tool(match: str, tool_calls: list) -> bool:
     if submit_match:
         tool_calls.append({
             "id": f"xml_submit_{len(tool_calls)}", "name": "submit",
-            "input": {"solution_path": unescape_html(submit_match.group(1).strip())}
+            "input": {"solution_path": unescape_html(submit_match.group(1).strip())},
         })
         return True
 
@@ -64,31 +62,22 @@ def _parse_xml_tool(match: str, tool_calls: list) -> bool:
 
 
 def parse_xml_tool_calls(content: str) -> List[Dict[str, Any]]:
-    """Parse XML-formatted tool calls from model response."""
     tool_calls: List[Dict[str, Any]] = []
-
     for match in re.findall(r'<tool_call>(.*?)</tool_call>', content, re.DOTALL):
         _parse_xml_tool(match, tool_calls)
-
     if not tool_calls:
         _parse_xml_tool(content, tool_calls)
-
     return tool_calls
 
 
 def extract_python_code(text: str) -> Optional[str]:
-    """Extract Python code from model response.
-
-    Tries markdown code blocks, generic blocks, and solution markers.
-    Returns the last (most complete) code block found, or None.
-    """
     python_blocks = re.findall(r'```(?:python|py)\s*\n(.*?)```', text, re.DOTALL)
     if python_blocks:
         return python_blocks[-1].strip()
 
     generic_blocks = re.findall(r'```\s*\n(.*?)```', text, re.DOTALL)
     for block in reversed(generic_blocks):
-        if any(marker in block for marker in ['import ', 'def ', 'class ', 'torch.', 'cuda_source']):
+        if any(marker in block for marker in ["import ", "def ", "class ", "torch.", "cuda_source"]):
             return block.strip()
 
     solution_match = re.search(r'# solution\.py\s*\n(.*?)(?=\n#\s*\w+\.py|\Z)', text, re.DOTALL)

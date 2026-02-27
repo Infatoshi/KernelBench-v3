@@ -63,9 +63,10 @@ class Model(nn.Module):
             self.fp8_dtype = torch.float8_e5m2
             self.fp8_max = 57344.0  # Max representable value in E5M2
 
-        # Weight matrix stored in FP16 (quantized dynamically in forward)
-        # In production, weights would be pre-quantized to FP8
+        rng_state = torch.random.get_rng_state()
+        torch.manual_seed(1337)
         self.weight = nn.Parameter(torch.randn(K, N) * 0.02)
+        torch.random.set_rng_state(rng_state)
 
     def compute_scale(self, x: torch.Tensor) -> torch.Tensor:
         """Compute per-tensor scale for FP8 quantization."""

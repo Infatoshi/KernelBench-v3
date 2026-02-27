@@ -1,103 +1,42 @@
-# Python
 __pycache__/
 **/__pycache__/
 *.py[cod]
-*$py.class
 *.so
 *.egg-info/
 dist/
 build/
-eggs/
-*.egg
-.Python
-develop-eggs/
-.installed.cfg
 
-# Virtual environments
-venv/
 .venv/
-ENV/
-env/
+venv/
 
-# IDE
 .idea/
 .vscode/
 *.swp
-*.swo
 .cursor/
-*.sublime-*
 
-# OS
 .DS_Store
 Thumbs.db
 
-# API Keys and Secrets - CRITICAL
 .env
 .env.*
-*.env
 secrets.json
 credentials.json
-**/secrets/
-**/credentials/
 *.key
 *.pem
-api_keys.txt
 .modal.toml
 
-# Modal and cloud configs
-.modal/
-
-# Evaluation outputs (may contain model responses)
 outputs/
-output/
 logs/
-runs/
-results/
 tmp/
 
-# Specific output directories
-outputs/local_kernels/
-outputs/json/
-outputs/plots/
-outputs/csv/
-outputs/batch_eval/
-outputs/modal_eval/
-
-# Development scratch
-scratch/
-**/scratch/
-test_build/
-*.tmp
-
-# Data directories
-data/
-cache/
-.cache/
-visualizations/
-
-# Cloned repos (for CUTLASS etc)
-repos/
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb_checkpoints
-
-# Coverage and testing
+.ruff_cache/
+.pytest_cache/
 .coverage
 htmlcov/
-.pytest_cache/
-.tox/
 
-# Linter cache
-.ruff_cache/
-
-# Audit logs
-audit/
-
-# Misc logs
-*.log
-excalidraw.log
-
-# Agent config (local-only, not for public repo)
 AGENTS.md
 .cursorrules
+*.log
+
+# Local NVIDIA documentation (cloned repos, downloaded docs)
+docs/refs/
