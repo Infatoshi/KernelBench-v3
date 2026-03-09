@@ -197,8 +197,41 @@ try:
     if declared_supported_precisions:
         valid_precisions = sorted(set(valid_precisions) & set(declared_supported_precisions))
     precision_supported = precision in valid_precisions if valid_precisions else None
-    baseline_type = "cutlass" if precision == "fp4" and HARDWARE == "B200" else "pytorch"
     problem_size = infer_problem_size(op_type, bench_inputs)
+
+    # Adaptive baseline: try torch.compile, use it only if faster than eager
+    baseline_type = "pytorch_eager"
+    compiled_ref_model = None
+    try:
+        compiled_ref_model = torch.compile(ref_model, mode='reduce-overhead')
+        for _ in range(3):
+            with torch.no_grad():
+                compiled_ref_model(*bench_inputs)
+        torch.cuda.synchronize()
+        # Quick timing comparison: 10 iterations each
+        def _quick_time(m, inputs, n=10):
+            torch.cuda.synchronize()
+            t0 = torch.cuda.Event(enable_timing=True)
+            t1 = torch.cuda.Event(enable_timing=True)
+            t0.record()
+            for _ in range(n):
+                with torch.no_grad():
+                    m(*inputs)
+            t1.record()
+            torch.cuda.synchronize()
+            return t0.elapsed_time(t1) / n
+        eager_ms_quick = _quick_time(ref_model, bench_inputs)
+        compiled_ms_quick = _quick_time(compiled_ref_model, bench_inputs)
+        if compiled_ms_quick < eager_ms_quick * 0.95:
+            ref_model = compiled_ref_model
+            baseline_type = "torch_compile"
+            print(f"Baseline: torch.compile ({compiled_ms_quick:.3f}ms vs eager {eager_ms_quick:.3f}ms)", flush=True)
+        else:
+            compiled_ref_model = None
+            print(f"Baseline: pytorch_eager ({eager_ms_quick:.3f}ms, compile was {compiled_ms_quick:.3f}ms)", flush=True)
+    except Exception as e:
+        compiled_ref_model = None
+        print(f"Baseline: pytorch_eager (torch.compile failed: {e})", flush=True)
 
     if REPEATABILITY_CHECK:
         repeat_outputs = []

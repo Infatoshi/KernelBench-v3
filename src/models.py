@@ -79,13 +79,13 @@ MODELS: Dict[str, ModelConfig] = {
         name="GPT-5.3 Codex", model_id="openai/gpt-5.3-codex", provider="openrouter",
     ),
     "google/gemini-3-flash-preview": ModelConfig(
-        name="Gemini 3 Flash Preview", model_id="google/gemini-3-flash-preview", provider="gemini",
+        name="Gemini 3 Flash Preview", model_id="google/gemini-3-flash-preview", provider="openrouter",
     ),
     "google/gemini-3-pro-preview": ModelConfig(
-        name="Gemini 3 Pro Preview", model_id="google/gemini-3-pro-preview", provider="gemini",
+        name="Gemini 3 Pro Preview", model_id="google/gemini-3-pro-preview", provider="openrouter",
     ),
     "google/gemini-3.1-pro-preview": ModelConfig(
-        name="Gemini 3.1 Pro Preview", model_id="google/gemini-3.1-pro-preview", provider="gemini",
+        name="Gemini 3.1 Pro Preview", model_id="google/gemini-3.1-pro-preview", provider="openrouter",
     ),
     "deepseek/deepseek-v3.2": ModelConfig(
         name="DeepSeek V3.2", model_id="deepseek/deepseek-v3.2", provider="openrouter",
