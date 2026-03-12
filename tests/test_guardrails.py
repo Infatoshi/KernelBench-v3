@@ -70,3 +70,20 @@ def test_validate_solution_dispatch():
     cuda_code = "output = torch.matmul(a, b)"
     assert validate_solution(cuda_code, is_metal=False) is not None
     assert validate_solution(cuda_code, is_metal=True) is not None
+
+
+def test_sandbox_command_blocklist():
+    from src.tools import BLOCKED_COMMANDS, BLOCKED_WRITE_PATHS
+
+    assert BLOCKED_COMMANDS.search("pkill -9 python")
+    assert BLOCKED_COMMANDS.search("kill -9 12345")
+    assert BLOCKED_COMMANDS.search("killall python")
+    assert BLOCKED_COMMANDS.search("cat > _benchmark.py")
+    assert BLOCKED_COMMANDS.search("rm -rf /")
+    assert not BLOCKED_COMMANDS.search("python solution.py")
+    assert not BLOCKED_COMMANDS.search("cat reference.py")
+    assert not BLOCKED_COMMANDS.search("nvidia-smi --query-gpu=name")
+
+    assert "_benchmark.py" in BLOCKED_WRITE_PATHS
+    assert "reference.py" in BLOCKED_WRITE_PATHS
+    assert "solution.py" not in BLOCKED_WRITE_PATHS

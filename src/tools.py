@@ -1,6 +1,23 @@
 """Tool schemas (Anthropic/OpenAI/Gemini) and tool dispatch logic."""
 
+import re
 from typing import Any, Dict, List
+
+BLOCKED_COMMANDS = re.compile(
+    r"(?:^|\s|;|&&|\|\|)"
+    r"(?:pkill|killall|kill\s+-9|kill\s+-KILL|kill\s+-SIGKILL"
+    r"|rm\s+-rf\s+/"
+    r"|>\s*_benchmark\.py|>\s*/workspace/_benchmark"
+    r"|cat\s*>\s*_benchmark"
+    r"|chmod|chown"
+    r"|nvidia-smi\s+--(?:reset|drain|persist)"
+    r"|CUDA_VISIBLE_DEVICES=\s*$"
+    r"|unset\s+CUDA"
+    r")",
+    re.IGNORECASE,
+)
+
+BLOCKED_WRITE_PATHS = {"_benchmark.py", "reference.py", "ENVIRONMENT.md", "BACKEND_API.md", "TASK_CONTEXT.md"}
 
 
 def _dispatch_tool(tool_name: str, tool_input: dict, sandbox) -> str:
@@ -21,12 +38,18 @@ def _dispatch_tool(tool_name: str, tool_input: dict, sandbox) -> str:
 
     if tool_name == "write_file":
         path = tool_input.get("path", "")
+        basename = path.rsplit("/", 1)[-1] if "/" in path else path
+        if basename in BLOCKED_WRITE_PATHS:
+            return f"Error: cannot overwrite protected file: {path}"
         file_content = tool_input.get("content", "")
         success = sandbox.write_file(path, file_content)
         return f"Successfully wrote to {path}" if success else f"Error writing file: {path}"
 
     if tool_name == "edit_file":
         path = tool_input.get("path", "")
+        basename = path.rsplit("/", 1)[-1] if "/" in path else path
+        if basename in BLOCKED_WRITE_PATHS:
+            return f"Error: cannot edit protected file: {path}"
         old_str = tool_input.get("old_str", "")
         new_str = tool_input.get("new_str", "")
         content = sandbox.read_file(path)
@@ -44,6 +67,8 @@ def _dispatch_tool(tool_name: str, tool_input: dict, sandbox) -> str:
 
     if tool_name == "bash":
         cmd = tool_input.get("command", "")
+        if BLOCKED_COMMANDS.search(cmd):
+            return "Error: command blocked by sandbox security policy. Do not kill processes, modify benchmark files, or alter GPU settings."
         timeout = tool_input.get("timeout")
         cmd_result = sandbox.run_command(cmd, timeout=timeout) if timeout else sandbox.run_command(cmd)
         return f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
