@@ -63,6 +63,7 @@ class ModelConfig:
     use_xml_tools: bool = False
     provider_order: Optional[List[str]] = None
     reasoning_mode: bool = False
+    reasoning_effort: Optional[str] = None  # none, low, medium, high, xhigh
 
 
 MODELS: Dict[str, ModelConfig] = {
@@ -77,6 +78,18 @@ MODELS: Dict[str, ModelConfig] = {
     ),
     "openai/gpt-5.3-codex": ModelConfig(
         name="GPT-5.3 Codex", model_id="openai/gpt-5.3-codex", provider="openrouter",
+    ),
+    "openai/gpt-5.3": ModelConfig(
+        name="GPT-5.3", model_id="gpt-5.3-chat-latest", provider="openai",
+    ),
+    "openai/gpt-5.4": ModelConfig(
+        name="GPT-5.4", model_id="gpt-5.4", provider="openai",
+    ),
+    "openai/gpt-5.4-low": ModelConfig(
+        name="GPT-5.4 (low)", model_id="gpt-5.4", provider="openai", reasoning_effort="low",
+    ),
+    "openai/gpt-5.4-high": ModelConfig(
+        name="GPT-5.4 (high)", model_id="gpt-5.4", provider="openai", reasoning_effort="high",
     ),
     "google/gemini-3-flash-preview": ModelConfig(
         name="Gemini 3 Flash Preview", model_id="google/gemini-3-flash-preview", provider="openrouter",

@@ -75,6 +75,13 @@ OPTIMIZATION GUIDANCE:
 - Example references in CUTLASS: 70_blackwell_gemm, 72_blackwell_narrow_precision_gemm, 92_blackwell_moe_gemm
 """
 
+PROFILING_TOOLS = """
+PROFILING (available via bash, use when optimizing):
+- `ncu --metrics sm__throughput.avg.pct_of_peak_sustained_elapsed,dram__throughput.avg.pct_of_peak_sustained_elapsed python -c "..."` — SM and memory bandwidth utilization
+- `nsys profile --stats=true python -c "..."` — full timeline with kernel durations
+- `torch.profiler` — kernel count and basic timing from Python
+Use these to diagnose bottlenecks (compute-bound vs memory-bound) when your kernel is correct but slow."""
+
 TOOLS_SECTION = """
 TOOLS:
 - read_file(path): Read file contents
@@ -125,6 +132,7 @@ APPROACH — choose the best strategy for this hardware:
 - Inline PTX for architecture-specific tensor core instructions
 - CUTLASS templates via load_inline with headers at `/opt/cutlass/include`
 {arch_section}
+{PROFILING_TOOLS}
 FORBIDDEN (guardrail — will reject your submission):
 - `torch.matmul`, `torch.mm`, `torch.conv2d`, `F.linear`, `F.conv2d` (PyTorch operator fallback)
 - `torch.compile`, `@torch.jit.script`

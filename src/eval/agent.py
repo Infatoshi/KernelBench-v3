@@ -404,6 +404,7 @@ def run_eval(
         gpu=hardware_target.gpu_sku,
         problem=problem_name,
         level=level,
+        reasoning_effort=model_config.reasoning_effort,
     )
 
     start_time = time.time()

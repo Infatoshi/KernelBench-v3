@@ -71,6 +71,8 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
             "max_completion_tokens": 8192,
             "messages": messages,
         }
+        if model_config.reasoning_effort:
+            kwargs["extra_body"] = {"reasoning_effort": model_config.reasoning_effort}
         if not model_config.use_xml_tools:
             kwargs["tools"] = TOOLS_OPENAI
         return client.chat.completions.create(**kwargs)

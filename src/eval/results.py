@@ -49,6 +49,7 @@ class EvalResult:
 
     solution_path: Optional[str] = None
     solution_hash: Optional[str] = None
+    reasoning_effort: Optional[str] = None
     elapsed_seconds: float = 0.0
 
     hardware_fingerprint: Dict[str, Any] = field(default_factory=dict)
