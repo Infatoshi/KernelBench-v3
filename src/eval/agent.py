@@ -29,7 +29,7 @@ from src.hardware import HardwareTarget
 from src.models import ModelConfig, get_provider_client
 from src.parsing import extract_python_code
 from src.prompts import get_reasoning_prompt, get_system_prompt
-from src.tools import _dispatch_tool, build_gemini_tools
+from src.tools import BLOCKED_COMMANDS, _dispatch_tool, build_gemini_tools
 
 MAX_PROBLEM_TIME_SECONDS = {1: 300, 2: 600, 3: 900, 4: 1200}
 
@@ -177,12 +177,16 @@ def _run_gemini_agent(
             if tool_name == "bash":
                 cmd = tool_args.get("command", "")
                 print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
-                cmd_result = sandbox.run_command(cmd)
-                output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
-                _write_turn_artifact(turn + 1, "compile.log", _format_command_result(cmd, cmd_result))
-                if cmd_result["stdout"]:
-                    out = cmd_result["stdout"][:150] + "..." if len(cmd_result["stdout"]) > 150 else cmd_result["stdout"]
-                    print(f"    -> {out}", flush=True)
+                if BLOCKED_COMMANDS.search(cmd):
+                    output = "Error: command blocked by sandbox security policy. Do not kill processes, modify benchmark files, or alter GPU settings."
+                    print(f"    -> BLOCKED", flush=True)
+                else:
+                    cmd_result = sandbox.run_command(cmd)
+                    output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
+                    _write_turn_artifact(turn + 1, "compile.log", _format_command_result(cmd, cmd_result))
+                    if cmd_result["stdout"]:
+                        out = cmd_result["stdout"][:150] + "..." if len(cmd_result["stdout"]) > 150 else cmd_result["stdout"]
+                        print(f"    -> {out}", flush=True)
                 function_responses.append(
                     genai.protos.Part(
                         function_response=genai.protos.FunctionResponse(
@@ -559,16 +563,20 @@ def run_eval(
                 if tool_name == "bash":
                     cmd = tool_input.get("command", "")
                     print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
-                    cmd_result = sandbox.run_command(cmd)
-                    output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
-                    turn_tool_logs.append(_format_command_result(cmd, cmd_result))
-                    if cmd_result["stdout"]:
-                        out = (
-                            cmd_result["stdout"][:150] + "..."
-                            if len(cmd_result["stdout"]) > 150
-                            else cmd_result["stdout"]
-                        )
-                        print(f"    -> {out}", flush=True)
+                    if BLOCKED_COMMANDS.search(cmd):
+                        output = "Error: command blocked by sandbox security policy. Do not kill processes, modify benchmark files, or alter GPU settings."
+                        print(f"    -> BLOCKED", flush=True)
+                    else:
+                        cmd_result = sandbox.run_command(cmd)
+                        output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
+                        turn_tool_logs.append(_format_command_result(cmd, cmd_result))
+                        if cmd_result["stdout"]:
+                            out = (
+                                cmd_result["stdout"][:150] + "..."
+                                if len(cmd_result["stdout"]) > 150
+                                else cmd_result["stdout"]
+                            )
+                            print(f"    -> {out}", flush=True)
                     tool_results.append({"id": tool_id, "name": tool_name, "content": output})
 
                 elif tool_name == "submit":

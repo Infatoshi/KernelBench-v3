@@ -2,6 +2,8 @@
 
 Hardware-centric GPU kernel optimization benchmark. LLM agents write CUDA/Triton/MLX kernels in sandboxed environments, competing against PyTorch baselines.
 
+Inspired by the original [KernelBench](https://github.com/ScalingIntelligence/KernelBench) from Scaling Intelligence and the benchmarking methodology in ["This Kernel Was Faster Yesterday" — In Pursuit of High-Fidelity GPU Kernel Benchmarking](https://standardkernel.com/blog/in-pursuit-of-high-fidelity-gpu-kernel-benchmarking/) from Standard Kernel.
+
 ## Hardware Benchmarks
 
 | Benchmark | GPU | Problems | Approach |

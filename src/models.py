@@ -109,6 +109,9 @@ MODELS: Dict[str, ModelConfig] = {
     "minimax/minimax-m2.5": ModelConfig(
         name="MiniMax M2.5", model_id="minimax/minimax-m2.5", provider="openrouter",
     ),
+    "minimax/minimax-m2.7": ModelConfig(
+        name="MiniMax M2.7", model_id="minimax/minimax-m2.7", provider="openrouter",
+    ),
     "moonshotai/kimi-k2.5": ModelConfig(
         name="Kimi K2.5", model_id="moonshotai/kimi-k2.5", provider="openrouter", reasoning_mode=True,
     ),

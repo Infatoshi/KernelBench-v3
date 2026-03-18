@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 BLOCKED_COMMANDS = re.compile(
     r"(?:^|\s|;|&&|\|\|)"
     r"(?:pkill|killall|kill\s+-9|kill\s+-KILL|kill\s+-SIGKILL"
-    r"|rm\s+-rf\s+/"
+    r"|rm\s+-rf\s+/(?:$|\s|;)|rm\s+-rf\s+/(?:workspace|home|usr|etc|var|opt|bin|sbin|lib|tmp)\b"
     r"|>\s*_benchmark\.py|>\s*/workspace/_benchmark"
     r"|cat\s*>\s*_benchmark"
     r"|chmod|chown"
