@@ -136,6 +136,8 @@ APPROACH — choose the best strategy for this hardware:
 FORBIDDEN (guardrail — will reject your submission):
 - `torch.matmul`, `torch.mm`, `torch.conv2d`, `F.linear`, `F.conv2d` (PyTorch operator fallback)
 - `torch.compile`, `@torch.jit.script`
+- External compute libraries: `fla.ops`, `flash_attn`, `xformers`
+- Solutions MUST contain at least one custom kernel (@triton.jit or CUDA via load_inline). Wrapping nn.Linear/nn.Conv2d with a dtype cast is not optimization.
 
 INTERFACE: Keep `Model`, `get_inputs`, `get_init_inputs` compatible with reference.py.
 
@@ -153,7 +155,7 @@ def _nvidia_reasoning_prompt(hardware_name: str, gpu_name: str, vram_gb: int) ->
 
 Write an optimized GPU kernel for the reference model. You may use CUDA C++ (load_inline), Triton (@triton.jit), inline PTX, or CUTLASS templates (headers at /opt/cutlass/include).
 {arch_section}
-FORBIDDEN: torch.matmul, F.linear, torch.compile, torch.jit.script
+FORBIDDEN: torch.matmul, F.linear, torch.compile, torch.jit.script, fla.ops, flash_attn, xformers. Must have at least one custom kernel.
 
 Keep `Model`, `get_inputs`, `get_init_inputs` compatible with reference. Correctness first, then performance.
 

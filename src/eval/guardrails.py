@@ -13,6 +13,24 @@ NVIDIA_FORBIDDEN = [
     (re.compile(r"@torch\.jit\.script"), "Forbidden torch.jit.script"),
 ]
 
+# External libraries that do the heavy compute -- using these isn't "optimizing"
+NVIDIA_LIBRARY_FORBIDDEN = [
+    (re.compile(r"from\s+fla\.ops\b"), "Forbidden external library: fla.ops (must write custom kernel)"),
+    (re.compile(r"from\s+flash_attn\b"), "Forbidden external library: flash_attn (must write custom kernel)"),
+    (re.compile(r"from\s+xformers\b"), "Forbidden external library: xformers (must write custom kernel)"),
+]
+
+# Patterns that indicate custom kernel work exists in the solution
+_CUSTOM_KERNEL_INDICATORS = [
+    "triton.jit",
+    "@triton.jit",
+    "load_inline",
+    "__global__",
+    "tl.load(",
+    "tl.store(",
+    "tl.dot(",
+]
+
 METAL_FORBIDDEN = [
     (re.compile(r"(?:^|[^\w])import\s+torch\b"), "Forbidden: torch in Metal solution"),
     (re.compile(r"(?:^|[^\w])torch\."), "Forbidden: PyTorch usage in Metal solution"),
@@ -21,11 +39,25 @@ METAL_FORBIDDEN = [
 ]
 
 
+def _has_custom_kernel(code: str) -> bool:
+    """Check if solution contains at least one custom kernel."""
+    return any(indicator in code for indicator in _CUSTOM_KERNEL_INDICATORS)
+
+
 def validate_nvidia(code: str) -> Optional[str]:
     for pattern, message in NVIDIA_FORBIDDEN:
         match = pattern.search(code)
         if match:
             return f"{message}: `{match.group(0).strip()}`"
+
+    for pattern, message in NVIDIA_LIBRARY_FORBIDDEN:
+        match = pattern.search(code)
+        if match:
+            return f"{message}: `{match.group(0).strip()}`"
+
+    if not _has_custom_kernel(code):
+        return "No custom kernel found: solution must contain at least one Triton or CUDA kernel"
+
     return None
 
 
