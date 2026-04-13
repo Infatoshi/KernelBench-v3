@@ -52,6 +52,10 @@ class EvalResult:
     reasoning_effort: Optional[str] = None
     elapsed_seconds: float = 0.0
 
+    judge_legitimate: Optional[bool] = None
+    judge_reason: Optional[str] = None
+    judge_model: Optional[str] = None
+
     hardware_fingerprint: Dict[str, Any] = field(default_factory=dict)
 
 

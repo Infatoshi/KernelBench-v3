@@ -51,13 +51,15 @@ def _estimate_cost(
 
 
 def _get_model_response(client, model_config: ModelConfig, system_prompt: str, messages: list):
+    max_tokens = model_config.max_output_tokens or 8192
+
     if model_config.provider == "anthropic":
         system_with_cache = [
             {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}
         ]
         kwargs = {
             "model": model_config.model_id,
-            "max_tokens": 8192,
+            "max_tokens": max_tokens,
             "system": system_with_cache,
             "messages": messages,
         }
@@ -68,7 +70,7 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
     elif model_config.provider == "openai":
         kwargs = {
             "model": model_config.model_id,
-            "max_completion_tokens": 8192,
+            "max_completion_tokens": max_tokens,
             "messages": messages,
         }
         if model_config.reasoning_effort:
@@ -90,9 +92,13 @@ def _get_model_response(client, model_config: ModelConfig, system_prompt: str, m
                     })
                 else:
                     cached_messages.append(msg)
-            kwargs = {"model": model_config.model_id, "max_tokens": 8192, "messages": cached_messages}
+            kwargs = {"model": model_config.model_id, "max_tokens": max_tokens, "messages": cached_messages}
+            if model_config.provider_order:
+                kwargs["extra_body"] = {
+                    "provider": {"order": model_config.provider_order, "allow_fallbacks": True},
+                }
         else:
-            kwargs = {"model": model_config.model_id, "max_tokens": 8192, "messages": messages}
+            kwargs = {"model": model_config.model_id, "max_tokens": max_tokens, "messages": messages}
         if not model_config.use_xml_tools:
             kwargs["tools"] = TOOLS_OPENAI
         return client.chat.completions.create(**kwargs)

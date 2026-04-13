@@ -6,12 +6,14 @@ Inspired by the original [KernelBench](https://github.com/ScalingIntelligence/Ke
 
 ## Hardware Benchmarks
 
-| Benchmark | GPU | Problems | Approach |
-|-----------|-----|----------|----------|
-| **RTX3090Bench** | NVIDIA RTX 3090 (24GB) | 43 | CUDA C++ or Triton |
-| **H100Bench** | NVIDIA H100 (80GB) | 54 | CUDA/Triton/CUTLASS |
-| **B200Bench** | NVIDIA B200 (192GB) | 57 | CUDA/Triton/CUTLASS/CuTile |
-| **M4MaxBench** | Apple M4 Max (128GB) | 63 | MLX |
+
+| Benchmark        | GPU                    | Problems | Approach                   |
+| ---------------- | ---------------------- | -------- | -------------------------- |
+| **RTX3090Bench** | NVIDIA RTX 3090 (24GB) | 43       | CUDA C++ or Triton         |
+| **H100Bench**    | NVIDIA H100 (80GB)     | 54       | CUDA/Triton/CUTLASS        |
+| **B200Bench**    | NVIDIA B200 (192GB)    | 57       | CUDA/Triton/CUTLASS/CuTile |
+| **M4MaxBench**   | Apple M4 Max (128GB)   | 63       | MLX                        |
+
 
 ## Quick Start
 

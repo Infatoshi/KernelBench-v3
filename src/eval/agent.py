@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import signal
@@ -64,6 +65,29 @@ def _format_command_result(cmd: str, cmd_result: dict) -> str:
     )
 
 
+def _transcript_path() -> Optional[Path]:
+    artifact_dir = _get_turn_artifact_dir()
+    if artifact_dir is None:
+        return None
+    return artifact_dir / "transcript.jsonl"
+
+
+def _log_event(event_type: str, payload: dict) -> None:
+    path = _transcript_path()
+    if path is None:
+        return
+    entry = {
+        "timestamp": _dt.datetime.utcnow().isoformat() + "Z",
+        "type": event_type,
+        "payload": payload,
+    }
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+    except Exception:
+        pass
+
+
 def _auto_submit_if_compilable(
     sandbox, submitted: bool, solution_path: Optional[str]
 ) -> tuple[bool, Optional[str]]:
@@ -121,6 +145,7 @@ def _run_gemini_agent(
     system_prompt: str,
     initial_user_message: str,
     max_turns: int,
+    max_time: Optional[int] = None,
 ) -> tuple:
     import google.generativeai as genai
 
@@ -145,9 +170,16 @@ def _run_gemini_agent(
         total_input_tokens += getattr(response.usage_metadata, "prompt_token_count", 0)
         total_output_tokens += getattr(response.usage_metadata, "candidates_token_count", 0)
 
-    for turn in range(max_turns):
-        turns_used = turn + 1
-        print(f"\n[Turn {turn + 1}/{max_turns}]", flush=True)
+    agent_deadline = time.time() + (max_time or max_turns * 60)
+    turn = 0
+    while True:
+        remaining = agent_deadline - time.time()
+        if remaining <= 0:
+            print(f"\n[Wall clock timeout after {turn} turns]", flush=True)
+            break
+        turn += 1
+        turns_used = turn
+        print(f"\n[Turn {turn} | {remaining / 60:.1f}min remaining]", flush=True)
 
         function_calls = []
         text_parts = []
@@ -162,7 +194,7 @@ def _run_gemini_agent(
             text = " ".join(text_parts)
             text = text[:200] + "..." if len(text) > 200 else text
             print(f"Assistant: {text}", flush=True)
-        _write_turn_artifact(turn + 1, "response.txt", "\n".join(text_parts))
+        _write_turn_artifact(turn, "response.txt", "\n".join(text_parts))
 
         if not function_calls:
             print("No tool calls - agent finished", flush=True)
@@ -179,11 +211,11 @@ def _run_gemini_agent(
                 print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
                 if BLOCKED_COMMANDS.search(cmd):
                     output = "Error: command blocked by sandbox security policy. Do not kill processes, modify benchmark files, or alter GPU settings."
-                    print(f"    -> BLOCKED", flush=True)
+                    print("    -> BLOCKED", flush=True)
                 else:
                     cmd_result = sandbox.run_command(cmd)
                     output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
-                    _write_turn_artifact(turn + 1, "compile.log", _format_command_result(cmd, cmd_result))
+                    _write_turn_artifact(turn, "compile.log", _format_command_result(cmd, cmd_result))
                     if cmd_result["stdout"]:
                         out = cmd_result["stdout"][:150] + "..." if len(cmd_result["stdout"]) > 150 else cmd_result["stdout"]
                         print(f"    -> {out}", flush=True)
@@ -237,6 +269,7 @@ def _run_reasoning_agent(
     system_prompt: str,
     initial_user_message: str,
     max_turns: int,
+    max_time: Optional[int] = None,
 ) -> tuple:
     from openai import OpenAI
 
@@ -256,9 +289,16 @@ def _run_reasoning_agent(
         {"role": "user", "content": initial_user_message},
     ]
 
-    for turn in range(max_turns):
-        turns_used = turn + 1
-        print(f"\n[Turn {turn + 1}/{max_turns}]", flush=True)
+    agent_deadline = time.time() + (max_time or max_turns * 60)
+    turn = 0
+    while True:
+        remaining = agent_deadline - time.time()
+        if remaining <= 0:
+            print(f"\n[Wall clock timeout after {turn} turns]", flush=True)
+            break
+        turn += 1
+        turns_used = turn
+        print(f"\n[Turn {turn} | {remaining / 60:.1f}min remaining]", flush=True)
 
         try:
             response = client.chat.completions.create(
@@ -280,7 +320,7 @@ def _run_reasoning_agent(
         content = response.choices[0].message.content or ""
         text_preview = content[:300] + "..." if len(content) > 300 else content
         print(f"Assistant: {text_preview}", flush=True)
-        _write_turn_artifact(turn + 1, "response.txt", content)
+        _write_turn_artifact(turn, "response.txt", content)
 
         messages.append({"role": "assistant", "content": content})
 
@@ -296,7 +336,7 @@ def _run_reasoning_agent(
         print(f"  Extracted {len(code)} chars of Python code", flush=True)
 
         sandbox.write_file("solution.py", code)
-        _write_turn_artifact(turn + 1, "solution.py", code)
+        _write_turn_artifact(turn, "solution.py", code)
 
         print("  Testing compilation...", flush=True)
         compile_result = sandbox.run_command(
@@ -344,6 +384,8 @@ def _finalize_agent_result(
     level: int,
     cache_creation_tokens: int = 0,
     cache_read_tokens: int = 0,
+    judge_model_key: Optional[str] = None,
+    problem_code: str = "",
 ) -> None:
     result.turns = turns_used
     result.submitted = submitted
@@ -391,6 +433,33 @@ def _finalize_agent_result(
         )
         if benchmark_result is not None:
             apply_benchmark_metrics(result, benchmark_result)
+
+        if judge_model_key and result.correct and result.speedup and result.speedup > 1.0:
+            print("\n" + "-" * 60, flush=True)
+            print(f"JUDGE REVIEW ({judge_model_key})", flush=True)
+            print("-" * 60, flush=True)
+
+            solution_code = sandbox.read_file(solution_path.replace("/workspace/", "")) or ""
+            from src.eval.judge import judge_solution
+
+            verdict = judge_solution(
+                judge_model_key=judge_model_key,
+                problem_code=problem_code,
+                solution_code=solution_code,
+                problem_name=result.problem,
+                benchmark_metrics=benchmark_result or {},
+            )
+
+            result.judge_model = judge_model_key
+            result.judge_legitimate = verdict.get("legitimate", True)
+            result.judge_reason = verdict.get("reason", "")
+
+            if not result.judge_legitimate:
+                print(f"JUDGE VERDICT: FAIL — {result.judge_reason}", flush=True)
+                result.correct = False
+                result.error = f"judge_rejected: {result.judge_reason}"
+            else:
+                print(f"JUDGE VERDICT: PASS — {result.judge_reason}", flush=True)
     else:
         result.error = "No solution submitted"
 
@@ -402,6 +471,8 @@ def run_eval(
     problem_name: str,
     level: int,
     max_turns: int = 20,
+    max_time: Optional[int] = None,
+    judge_model_key: Optional[str] = None,
 ) -> EvalResult:
     result = EvalResult(
         model=model_config.name,
@@ -431,6 +502,15 @@ def run_eval(
         sandbox.start()
         print(f"Sandbox started: {sandbox.get_gpu_info()}", flush=True)
 
+        _log_event("session_start", {
+            "model": model_config.name, "model_id": model_config.model_id,
+            "provider": model_config.provider, "hardware": hardware_target.name,
+            "gpu": hardware_target.gpu_sku, "vram_gb": hardware_target.vram_gb,
+            "problem": problem_name, "level": level,
+            "max_time": max_time, "max_turns": max_turns,
+            "judge_model": judge_model_key,
+        })
+
         context_bundle = prepare_workspace_context(
             hardware_name=hardware_target.name,
             gpu_name=gpu_name,
@@ -456,19 +536,12 @@ def run_eval(
 
         if model_config.provider == "gemini":
             submitted, solution_path, turns_used, input_tokens, output_tokens = _run_gemini_agent(
-                model_config, sandbox, system_prompt, initial_user_message, max_turns
+                model_config, sandbox, system_prompt, initial_user_message, max_turns, max_time=max_time
             )
             _finalize_agent_result(
-                result,
-                submitted,
-                solution_path,
-                input_tokens,
-                output_tokens,
-                turns_used,
-                model_config,
-                sandbox,
-                hardware_target,
-                level,
+                result, submitted, solution_path, input_tokens, output_tokens, turns_used,
+                model_config, sandbox, hardware_target, level,
+                judge_model_key=judge_model_key, problem_code=problem_code,
             )
             result.elapsed_seconds = time.time() - start_time
             return result
@@ -482,19 +555,12 @@ def run_eval(
             reasoning_prompt = inject_workspace_context(reasoning_prompt, context_bundle)
 
             submitted, solution_path, turns_used, input_tokens, output_tokens = _run_reasoning_agent(
-                model_config, sandbox, reasoning_prompt, initial_user_message, max_turns
+                model_config, sandbox, reasoning_prompt, initial_user_message, max_turns, max_time=max_time
             )
             _finalize_agent_result(
-                result,
-                submitted,
-                solution_path,
-                input_tokens,
-                output_tokens,
-                turns_used,
-                model_config,
-                sandbox,
-                hardware_target,
-                level,
+                result, submitted, solution_path, input_tokens, output_tokens, turns_used,
+                model_config, sandbox, hardware_target, level,
+                judge_model_key=judge_model_key, problem_code=problem_code,
             )
             result.elapsed_seconds = time.time() - start_time
             return result
@@ -517,15 +583,33 @@ def run_eval(
         total_cache_creation_tokens = 0
         total_cache_read_tokens = 0
 
-        for turn in range(max_turns):
-            result.turns = turn + 1
-            print(f"\n[Turn {turn + 1}/{max_turns}]", flush=True)
+        _log_event("system_prompt", {"content": system_prompt})
+        _log_event("user_message", {"content": initial_user_message})
 
-            try:
-                response = _get_model_response(client, model_config, system_prompt, messages)
-            except Exception as e:
-                print(f"API error: {e}", flush=True)
-                result.error = f"API error: {e}"
+        agent_deadline = time.time() + (max_time or max_turns * 60)
+        turn = 0
+        while True:
+            remaining = agent_deadline - time.time()
+            if remaining <= 0:
+                print(f"\n[Wall clock timeout after {turn} turns]", flush=True)
+                break
+
+            turn += 1
+            result.turns = turn
+            print(f"\n[Turn {turn} | {remaining / 60:.1f}min remaining]", flush=True)
+
+            response = None
+            for _retry in range(3):
+                try:
+                    response = _get_model_response(client, model_config, system_prompt, messages)
+                    break
+                except Exception as e:
+                    print(f"API error (attempt {_retry + 1}/3): {e}", flush=True)
+                    if _retry == 2:
+                        result.error = f"API error: {e}"
+                    else:
+                        time.sleep(5 * (_retry + 1))
+            if response is None:
                 break
 
             input_toks, output_toks, cache_create, cache_read = _extract_token_usage(response, model_config)
@@ -536,6 +620,17 @@ def run_eval(
 
             assistant_content, tool_calls = _parse_response(response, model_config)
 
+            reasoning_content = None
+            if hasattr(response, "choices") and response.choices:
+                reasoning_content = getattr(response.choices[0].message, "reasoning_content", None)
+
+            _log_event("assistant_message", {
+                "turn": turn, "content": assistant_content, "tool_calls": tool_calls,
+                "reasoning_content": reasoning_content,
+                "input_tokens": input_toks, "output_tokens": output_toks,
+                "cache_creation_tokens": cache_create, "cache_read_tokens": cache_read,
+            })
+
             if isinstance(assistant_content, str) and assistant_content:
                 text = assistant_content[:200] + "..." if len(assistant_content) > 200 else assistant_content
                 print(f"Assistant: {text}", flush=True)
@@ -543,12 +638,13 @@ def run_eval(
                 "assistant_content": assistant_content,
                 "tool_calls": tool_calls,
             }
-            _write_turn_artifact(turn + 1, "response.txt", json.dumps(turn_payload, indent=2, default=str))
+            _write_turn_artifact(turn, "response.txt", json.dumps(turn_payload, indent=2, default=str))
 
             messages.append(_format_assistant_message(assistant_content, tool_calls, model_config))
 
             if not tool_calls:
                 print("No tool calls - agent finished", flush=True)
+                _log_event("agent_finished", {"turn": turn, "reason": "no_tool_calls"})
                 break
 
             tool_results = []
@@ -565,7 +661,7 @@ def run_eval(
                     print(f"    $ {cmd[:80]}..." if len(cmd) > 80 else f"    $ {cmd}", flush=True)
                     if BLOCKED_COMMANDS.search(cmd):
                         output = "Error: command blocked by sandbox security policy. Do not kill processes, modify benchmark files, or alter GPU settings."
-                        print(f"    -> BLOCKED", flush=True)
+                        print("    -> BLOCKED", flush=True)
                     else:
                         cmd_result = sandbox.run_command(cmd)
                         output = f"stdout:\n{cmd_result['stdout']}\nstderr:\n{cmd_result['stderr']}\nreturn_code: {cmd_result['returncode']}"
@@ -591,14 +687,20 @@ def run_eval(
                     print(f"    -> {output[:150]}..." if len(output) > 150 else f"    -> {output}", flush=True)
                     tool_results.append({"id": tool_id, "name": tool_name, "content": output})
 
-            _write_turn_artifact(turn + 1, "compile.log", "\n\n".join(turn_tool_logs))
+            _log_event("tool_results", {
+                "turn": turn,
+                "results": [{"id": tr["id"], "name": tr["name"], "content": tr["content"]} for tr in tool_results],
+            })
+
+            _write_turn_artifact(turn, "compile.log", "\n\n".join(turn_tool_logs))
             if sandbox.file_exists("solution.py"):
                 sol_snapshot = sandbox.read_file("solution.py") or ""
-                _write_turn_artifact(turn + 1, "solution.py", sol_snapshot)
+                _write_turn_artifact(turn, "solution.py", sol_snapshot)
 
             messages.extend(_format_tool_results(tool_results, model_config))
 
             if submitted:
+                _log_event("agent_finished", {"turn": turn, "reason": "submitted", "solution_path": solution_path})
                 break
 
         submitted, solution_path = _auto_submit_if_compilable(sandbox, submitted, solution_path)
@@ -617,15 +719,22 @@ def run_eval(
             level,
             total_cache_creation_tokens,
             total_cache_read_tokens,
+            judge_model_key=judge_model_key,
+            problem_code=problem_code,
         )
+
+        from dataclasses import asdict
+        _log_event("session_end", asdict(result))
 
     except TimeoutError:
         result.error = "timeout_exceeded"
+        _log_event("session_end", {"error": "timeout_exceeded"})
     except Exception as e:
         import traceback
 
         traceback.print_exc()
         result.error = str(e)
+        _log_event("session_end", {"error": str(e)})
 
     finally:
         _clear_problem_alarm(alarm_handler)

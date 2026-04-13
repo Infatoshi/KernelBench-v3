@@ -35,6 +35,7 @@ def cmd_run(args):
         problem_filter=args.problem,
         dry_run=args.dry_run,
         resume_dir=args.resume,
+        judge_model=args.judge_model,
     )
 
 
@@ -98,6 +99,7 @@ def main():
     p_run.add_argument("--problem", type=str, default=None, help="Run a single problem by filename")
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--resume", type=str, default=None, help="Resume from run directory")
+    p_run.add_argument("--judge-model", type=str, default=None, help="Model key for post-benchmark judge")
 
     sub.add_parser("list-models", help="List registered models")
     sub.add_parser("list-hardware", help="List hardware targets")

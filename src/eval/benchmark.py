@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
+
+from filelock import FileLock
 
 from src.config.precision_matrix import (
     HARDWARE_PEAK_TFLOPS,
@@ -786,8 +790,17 @@ except Exception as exc:
 MAX_PROBLEM_TIME_SECONDS = {1: 300, 2: 600, 3: 900, 4: 1200}
 
 
+_GPU_LOCK_PATH = Path(tempfile.gettempdir()) / "kernelbench_gpu.lock"
+_gpu_lock = FileLock(_GPU_LOCK_PATH, timeout=-1)
+
+
 def run_benchmark(sandbox, solution_path: str, hardware: str, level: int, is_metal: bool = False) -> dict:
-    """Run correctness + performance benchmark, returning metrics dict."""
+    """Run correctness + performance benchmark, returning metrics dict.
+
+    Acquires a file lock so that only one benchmark runs on the GPU at a time.
+    This prevents contention that would corrupt timing measurements when
+    multiple workers finish their agent loops concurrently.
+    """
     if not solution_path.startswith("/"):
         solution_path = f"/workspace/{solution_path}"
     if not sandbox.file_exists(solution_path.replace("/workspace/", "")):
@@ -809,7 +822,11 @@ def run_benchmark(sandbox, solution_path: str, hardware: str, level: int, is_met
 
     sandbox.write_file("_benchmark.py", benchmark_script)
     benchmark_timeout = MAX_PROBLEM_TIME_SECONDS.get(level or 1, 600) + 120
-    result = sandbox.run_command("python _benchmark.py", timeout=benchmark_timeout)
+
+    print("Waiting for GPU lock...", flush=True)
+    with _gpu_lock:
+        print("GPU lock acquired, benchmarking...", flush=True)
+        result = sandbox.run_command("python _benchmark.py", timeout=benchmark_timeout)
 
     print(f"Benchmark output:\n{result['stdout']}", flush=True)
     if result["stderr"]:

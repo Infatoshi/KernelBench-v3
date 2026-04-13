@@ -70,6 +70,7 @@ def run_single_eval(
     problem_path: Path,
     max_turns: Optional[int] = None,
     turn_artifact_dir: Optional[Path] = None,
+    judge_model_key: Optional[str] = None,
 ) -> EvalResult:
     from src.eval.agent import run_eval
     from src.hardware import get_target
@@ -81,6 +82,7 @@ def run_single_eval(
 
     if max_turns is None:
         max_turns = target.max_turns(level)
+    max_time = target.max_time(level)
 
     with open(problem_path) as f:
         problem_code = f.read()
@@ -102,6 +104,8 @@ def run_single_eval(
             problem_name=problem_path.name,
             level=level,
             max_turns=max_turns,
+            max_time=max_time,
+            judge_model_key=judge_model_key,
         )
     except Exception as e:
         import traceback
@@ -132,6 +136,7 @@ def run_batch(
     problem_filter: Optional[str] = None,
     dry_run: bool = False,
     resume_dir: Optional[str] = None,
+    judge_model: Optional[str] = None,
 ) -> None:
     target_name = target.name
     tasks = get_all_tasks(target_name, model_keys, levels, problems_per_level, problem_filter)
@@ -153,9 +158,11 @@ def run_batch(
     print(f"Hardware: {target.display_name} ({target.gpu_sku})")
     print(f"Levels: {levels}")
     print(f"Total tasks: {len(tasks)}")
-    turn_limits = {lv: target.max_turns(lv) for lv in range(1, 5)}
-    print(f"Max turns: L1={turn_limits[1]}, L2={turn_limits[2]}, L3={turn_limits[3]}, L4={turn_limits[4]}")
+    time_limits = {lv: target.max_time(lv) for lv in range(1, 5)}
+    print(f"Time limits: L1={time_limits[1]//60}min, L2={time_limits[2]//60}min, L3={time_limits[3]//60}min, L4={time_limits[4]//60}min")
     print(f"Workers: {workers}")
+    if judge_model:
+        print(f"Judge model: {judge_model}")
     print("=" * 80)
 
     if dry_run:
@@ -166,6 +173,17 @@ def run_batch(
         if len(tasks) > 5:
             print(f"  ... and {len(tasks) - 5} more")
         return
+
+    max_concurrent_caps = []
+    for model_key in model_keys:
+        cfg = get_model_config(model_key)
+        if cfg and cfg.max_concurrent is not None:
+            max_concurrent_caps.append(cfg.max_concurrent)
+    if max_concurrent_caps:
+        effective_workers = min(workers, min(max_concurrent_caps))
+        if effective_workers < workers:
+            print(f"Note: capping workers {workers} -> {effective_workers} (model concurrency limit)")
+            workers = effective_workers
 
     pending = []
     for task in tasks:
@@ -195,7 +213,7 @@ def run_batch(
             cfg = get_model_config(model_key)
             task_id = f"{cfg.name if cfg else model_key}_{target.gpu_sku}_{problem_path.name}"
             turn_dir = run_dir / "turns" / task_id.replace("/", "-").replace(" ", "_")
-            future = executor.submit(run_single_eval, target_name, model_key, lv, problem_path, None, turn_dir)
+            future = executor.submit(run_single_eval, target_name, model_key, lv, problem_path, None, turn_dir, judge_model)
             futures[future] = task
 
         done_count = len(completed)

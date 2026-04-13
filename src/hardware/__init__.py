@@ -19,6 +19,10 @@ class HardwareTarget:
     def max_turns(self, level: int) -> int:
         return {1: 10, 2: 12, 3: 15, 4: 15}.get(level, 15)
 
+    def max_time(self, level: int) -> int:
+        """Wall clock timeout in seconds for the agent loop."""
+        return {1: 900, 2: 1800, 3: 2700, 4: 2700}.get(level, 2700)
+
     def find_problems(self, project_root: Path) -> List[Tuple[int, Path]]:
         problems: List[Tuple[int, Path]] = []
         problems_dir = project_root / "problems"

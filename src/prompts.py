@@ -15,10 +15,43 @@ HARDWARE CAPABILITIES (RTX 3090 — Ampere SM86):
 - Compile with: `-arch=sm_86 -I/opt/cutlass/include -std=c++17`
 
 OPTIMIZATION GUIDANCE:
+
+STEP 0 -- SPEED OF LIGHT ANALYSIS (do this FIRST for every kernel):
+- Compute DRAM bandwidth floor: total_bytes_moved / 936 GB/s (RTX 3090 peak).
+  If this floor is close to your measured time, the kernel is memory-bound.
+- Compute arithmetic intensity: total_FLOPS / total_bytes.
+  If arithmetic_intensity < 38 FLOP/byte, the kernel is memory-bound and tensor cores will NOT help.
+- The speed-of-light time is max(compute_floor, memory_floor). Your optimization
+  strategy depends entirely on which side you are on.
+
+MEMORY-BOUND KERNELS (most small-channel convolutions, elementwise ops, reductions):
+- Minimize DRAM traffic above all else. Fuse ops to eliminate intermediate tensors.
+  A fused kernel that touches DRAM once beats two fast kernels that touch it twice.
+- Consider register-only computation (no shared memory) when working set per thread
+  is small (<60 floats). This eliminates __syncthreads() overhead and lets L1 cache
+  handle cross-thread reuse automatically.
+- Use __constant__ memory for weights that fit in 64KB. Free broadcast to all threads.
+- Block scheduling order matters for L2 reuse: process spatially adjacent tiles
+  before switching batch elements (linearize blocks as (H, W, N) not (N, H, W)).
+- Common traps that DO NOT help on memory-bound kernels:
+  * Fast tanh/sigmoid approximations (ALU is not the bottleneck)
+  * Shared memory bank conflict padding (you should not be using shared memory)
+  * NHWC layout when IC < 16 (vectorized loads cannot fill a 128-byte transaction)
+  * Persistent kernels with low block count (need enough blocks to saturate DRAM BW)
+
+COMPUTE-BOUND KERNELS (large GEMMs, attention with long sequences):
 - For GEMM: use WMMA (`<mma.h>`, nvcuda::wmma) with FP16 or TF32 for tensor core utilization
-- Tile sizes: 128×128×32 or 256×128×32 for FP16 GEMM
+- Tensor cores via WMMA when K dimension >= 16
+- Tile sizes: 128x128x32 or 256x128x32 for FP16 GEMM
+- Implicit GEMM for convolutions: amortize im2col across output channels instead
+  of materializing the im2col buffer
 - Use shared memory double-buffering for memory latency hiding
 - For non-GEMM ops: standard CUDA with coalesced access, shared memory, warp shuffles
+
+PROFILING:
+- Use torch.profiler with ProfilerActivity.CUDA for actual kernel duration.
+  CUDA event timing (torch.cuda.Event) undercounts when kernels pipeline on
+  separate streams. Never trust sub-10us measurements from events.
 """
 
 ARCH_H100 = """

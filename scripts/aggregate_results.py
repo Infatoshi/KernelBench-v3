@@ -2,10 +2,8 @@
 
 import csv
 import json
-import os
 import shutil
 from pathlib import Path
-from collections import defaultdict
 
 BASE = Path("/home/infatoshi/cuda/KernelBench-v3")
 BATCH_DIR = BASE / "outputs" / "batch_eval"

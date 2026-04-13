@@ -211,7 +211,7 @@ def build_initial_user_message(
 - op_type: `{metadata.get("op_type", "unknown")}`
 - precisions: `{precisions}`
 
-You have {max_turns} turns. Run the correctness self-check and only submit after PASS.
+Take as many turns as you need. Run the correctness self-check and only submit after PASS.
 
 Reference code:
 ```python
