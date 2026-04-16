@@ -17,6 +17,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -54,10 +55,26 @@ def infer_level(problem_path: Path) -> int:
     return 2
 
 
-def build_claude_md(hardware: str, problem_name: str, level: int, reference_code: str) -> str:
+GATE_DESCRIPTIONS = {
+    "triton":    "Your solution MUST use Triton (@triton.jit). Raw CUDA / CUTLASS / PTX not accepted for this problem.",
+    "cutlass2":  "Your solution MUST use CUTLASS 2.x (device GEMM or CuTe layouts) -- `cutlass/gemm/device/gemm.h` etc. Triton not accepted.",
+    "cutlass3":  "Your solution MUST use CUTLASS 3.x or CuTe DSL (`cute::` namespace, collective builders). Triton not accepted.",
+    "cuda_wmma": "Your solution MUST use raw CUDA with nvcuda::wmma tensor-core APIs (`<mma.h>`). Triton not accepted.",
+    "ptx":       "Your solution MUST include inline PTX (`asm volatile` with mma.sync / wgmma / tcgen05). Triton not accepted.",
+    "cutile":    "Your solution MUST use cuTile (CUDA 13.x `cutile::` namespace).",
+    "no_triton": "Your solution MUST NOT use Triton. Any CUDA dialect (raw CUDA, CUTLASS, PTX, WMMA) is fine.",
+}
+
+
+def build_claude_md(hardware: str, problem_name: str, level: int, reference_code: str, framework_gate: str | None = None) -> str:
     """Build the CLAUDE.md that any agent harness will read."""
     gpu_name, vram, arch = HARDWARE_INFO[hardware]
     arch_section = ARCH_SECTIONS.get(hardware, "")
+
+    gate_text = ""
+    if framework_gate:
+        gate_rule = GATE_DESCRIPTIONS.get(framework_gate, f"Framework gated to: {framework_gate}")
+        gate_text = f"\n## Framework Requirement\n{gate_rule}\n"
 
     return f"""# KernelBench Task
 
@@ -99,6 +116,7 @@ Write an optimized CUDA kernel that is faster than the PyTorch reference impleme
 
 ## Difficulty
 Level {level} (1=basic ops, 2=fused ops, 3=architecture blocks, 4=novel/advanced)
+{gate_text}
 {arch_section}
 {PROFILING_TOOLS}
 """
@@ -148,7 +166,39 @@ def main():
             print(f"FAIL: max_diff={max_diff:.6f} (seed={seed})")
             sys.exit(1)
 
+    _emit_framework_label()
+
     print("PASS")
+
+
+def _emit_framework_label():
+    """Write framework.txt with the detected kernel framework used."""
+    import re
+    from pathlib import Path
+    patterns = [
+        ("ptx",       r"asm\\s+volatile|asm\\s*\\(|\\.ptx\\b|wgmma\\.mma_async|mma\\.sync|tcgen05\\."),
+        ("cutlass3",  r"\\bcute::|cutlass/gemm/collective|cutlass/gemm/kernel/sm(9|10)|cutlass::arch::Sm(9|10)"),
+        ("cutlass2",  r"cutlass/gemm/device/gemm|cutlass::gemm::device|cutlass::epilogue::thread"),
+        ("cuda_wmma", r"\\bnvcuda::wmma\\b|#include\\s*<mma\\.h>|wmma::fragment|wmma::mma_sync"),
+        ("cutile",    r"\\bcutile::|#include\\s*<cutile"),
+        ("triton",    r"import\\s+triton\\b|@triton\\.jit|triton\\.language\\b|\\btl\\.dot\\b"),
+        ("mlx",       r"import\\s+mlx\\b|mlx\\.core\\b|mx\\.fast\\."),
+        ("metal",     r"#include\\s*<metal_stdlib>|using\\s+namespace\\s+metal\\b|simdgroup_"),
+        ("cuda_raw",  r"torch\\.utils\\.cpp_extension\\.load_inline|__global__\\s+void|<<<[^>]+>>>"),
+    ]
+    try:
+        sol = Path("solution.py")
+        if not sol.exists():
+            return
+        code = sol.read_text()
+        label = "unknown"
+        for name, pat in patterns:
+            if re.search(pat, code):
+                label = name
+                break
+        Path("framework.txt").write_text(label + "\\n")
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()
@@ -245,8 +295,14 @@ def setup_workspace(hardware: str, problem_path: Path, out_dir: Path | None = No
     # Read reference code for context
     reference_code = problem_path.read_text()
 
+    # Extract optional FRAMEWORK_GATE from the problem file
+    framework_gate = None
+    m = re.search(r'^FRAMEWORK_GATE\s*=\s*["\']([\w_]+)["\']', reference_code, re.MULTILINE)
+    if m:
+        framework_gate = m.group(1)
+
     # Write CLAUDE.md
-    claude_md = build_claude_md(hardware, problem_name, level, reference_code)
+    claude_md = build_claude_md(hardware, problem_name, level, reference_code, framework_gate)
     (workspace / "CLAUDE.md").write_text(claude_md)
 
     # Write check and benchmark scripts
