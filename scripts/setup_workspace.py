@@ -25,16 +25,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.prompts import ARCH_B200, ARCH_H100, ARCH_RTX3090, PROFILING_TOOLS  # noqa: E402
+from src.prompts import ARCH_B200, ARCH_H100, ARCH_RTX3090, ARCH_RTX_PRO_6000, PROFILING_TOOLS  # noqa: E402
 
 ARCH_SECTIONS = {
     "rtx3090": ARCH_RTX3090,
+    "rtx_pro_6000": ARCH_RTX_PRO_6000,
     "h100": ARCH_H100,
     "b200": ARCH_B200,
 }
 
 HARDWARE_INFO = {
     "rtx3090": ("RTX 3090", 24, "Ampere SM86"),
+    "rtx_pro_6000": ("RTX PRO 6000 Blackwell Workstation", 96, "Blackwell SM120"),
     "h100": ("H100", 80, "Hopper SM90"),
     "b200": ("B200", 192, "Blackwell SM100"),
 }
@@ -333,7 +335,7 @@ def setup_all_workspaces(hardware: str, levels: list[int], out_dir: Path | None 
 
 def main():
     parser = argparse.ArgumentParser(description="Set up KernelBench workspace(s)")
-    parser.add_argument("hardware", choices=["rtx3090", "h100", "b200"])
+    parser.add_argument("hardware", choices=sorted(HARDWARE_INFO.keys()))
     parser.add_argument("problem", nargs="?", help="Path to a single problem .py file")
     parser.add_argument("--all", action="store_true", help="Set up all problems for this hardware")
     parser.add_argument("--levels", default="1,2,3,4", help="Comma-separated levels (default: 1,2,3,4)")

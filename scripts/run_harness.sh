@@ -9,9 +9,18 @@
 
 set -euo pipefail
 
+# Pin CUDA 13 for agent subprocesses. The /usr/local/cuda symlink may still
+# point to 12.8 on some machines; /usr/local/cuda-13 always resolves to the
+# 13.x toolkit we need for SM120 / SM100 targets (flashinfer, CUTLASS 4.x,
+# Blackwell compile flags).
+if [ -d /usr/local/cuda-13 ]; then
+    export CUDA_HOME=/usr/local/cuda-13
+    export PATH="$CUDA_HOME/bin:$PATH"
+fi
+
 HARNESS="${1:?Usage: $0 <droid|codex|claude> <model_flag>}"
 MODEL="${2:-}"
-WS_ROOT="${3:-workspaces/rtx3090}"
+WS_ROOT="${3:-workspaces/rtx_pro_6000}"
 RESULTS_DIR="outputs/harness_eval"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RUN_DIR="${RESULTS_DIR}/run_${TIMESTAMP}_${HARNESS}_$(echo "$MODEL" | tr '/:[] ' '_')"

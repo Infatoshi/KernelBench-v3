@@ -132,11 +132,47 @@ TOOLS (XML format):
 <tool_call><submit><solution_path>solution.py</solution_path></submit></tool_call>"""
 
 
+ARCH_RTX_PRO_6000 = """
+HARDWARE CAPABILITIES (RTX PRO 6000 Blackwell Workstation — SM120 / consumer-lineage Blackwell):
+- Compute capability 12.0. Shares Blackwell feature set with B200 (SM100) with some differences:
+  * 96GB GDDR7 memory (no HBM, no NVLink/NVSwitch)
+  * tcgen05 tensor cores: 5th gen, 2-4x Hopper throughput
+  * FP4 (e2m1, nvf4, mxf4), FP6, FP8, BF16, FP16, TF32, INT8 tensor core types
+  * Block-scaled GEMMs: mxf4/mxf6/mxf8 with 32-element K-dim scales
+  * TMEM (Tensor Memory) per-SM: accumulator storage decouples MMA from epilogue
+  * Thread block clusters + distributed shared memory
+  * TMA (bulk async copy) + mbarrier sync
+  * Cluster launch control
+- CUTLASS 4.x: arch::Sm120a, `cutlass/arch/mma_sm120.h`, Blackwell CuTe atoms
+- CUTLASS headers at `/opt/cutlass/include` (v4+)
+- CUDA 13 required (nvcc 13.x). Default PATH may point at 12.8 — use `/usr/local/cuda-13/bin/nvcc` or set `CUDA_HOME=/usr/local/cuda-13`.
+- Compile with: `-arch=sm_120a -I/opt/cutlass/include -std=c++17`
+- PyTorch 2.11+, Triton 3.6+ on CUDA 13.0. Install path: `--index-url https://download.pytorch.org/whl/cu128` (wheel works against system CUDA 13).
+
+AVAILABLE KERNEL LIBRARIES (tested on SM120):
+- Working: PyTorch native, Triton `tl.dot`, torch.compile reduce-overhead, SDPA flash backend,
+  xformers memory_efficient_attention, bitsandbytes NF4, mamba-ssm selective_scan, FLA (chunk_kda,
+  chunk_linear_attn, gated_delta_rule), scattermoe, lightning-attn, liger-kernel, flashinfer
+  (requires CUDA_HOME=/usr/local/cuda-13).
+- Blocked: flash-attn prebuilt wheels (ABI mismatch), flash-attn-3 (no PyPI distribution).
+- CUTLASS Python CuTe DSL: import via `import cutlass.cute as cute`.
+
+OPTIMIZATION GUIDANCE:
+- For FP4/NVFP4 GEMM: `tcgen05.mma.kind::mxf4.block_scale` is the peak-throughput path.
+- For FP8: `tcgen05.mma.kind::f8f6f4` gives 2x BF16 on this chip.
+- For BF16/FP16: `tcgen05.mma.kind::f16` — still benefits from TMEM vs SM90 WGMMA.
+- Block-scaled layouts use `cutlass::detail::Sm120BlockScaledConfig` style configs.
+- CUTLASS example references: 70_blackwell_gemm, 72_blackwell_narrow_precision_gemm.
+- The Pro 6000 has GDDR7 (~1.8 TB/s) — bandwidth-bound problems won't hit the same numbers as B200 HBM3e (~8 TB/s). Compute-bound FP8/FP4 numbers are close to B200.
+"""
+
+
 def _get_arch_section(hardware_name: str) -> str:
     return {
         "rtx3090": ARCH_RTX3090,
         "h100": ARCH_H100,
         "b200": ARCH_B200,
+        "rtx_pro_6000": ARCH_RTX_PRO_6000,
     }.get(hardware_name, "")
 
 
