@@ -1,3 +1,15 @@
+# KernelBench-v3 has moved
+
+Active development now lives in the unified monorepo:
+**https://github.com/Infatoshi/kernelbench.com/tree/master/benchmarks/v3**
+
+Leaderboard and writeups: **https://kernelbench.com**
+
+This repo is archived (read-only). Its code and full history were merged into
+the monorepo above.
+
+---
+
 # KernelBench v3
 
 Hardware-centric GPU kernel optimization benchmark. LLM agents write CUDA/Triton/MLX kernels in sandboxed environments, competing against PyTorch baselines.
